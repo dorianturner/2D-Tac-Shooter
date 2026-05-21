@@ -43,6 +43,16 @@ describe("authoritative simulation", () => {
     expect(room.players.p1.position).toEqual({ x: 40, y: 50 });
   });
 
+  it("keeps one-player rooms in the lobby phase while waiting", () => {
+    const room = createRoom("waiting", testMap());
+    const welcome = joinRoom(room, false, "p1");
+    expect(welcome?.playerId).toBe("p1");
+    for (let i = 0; i < 90; i += 1) stepRoom(room);
+    expect(room.round.phase).toBe("lobby");
+    expect(snapshotFor(room, "p1").round.phase).toBe("lobby");
+    expect(room.round.matchWinner).toBeUndefined();
+  });
+
   it("initializes and moves hinged doors when pushed", () => {
     const map = testMap();
     map.walls.push(createWall("door-1", "door", { x: 120, y: 90 }, { x: 120, y: 150 }, 8));
@@ -91,6 +101,66 @@ describe("authoritative simulation", () => {
     expect(door.currentAngle).toBe(0);
     expect(door.angularVelocity).toBe(0);
     expect(door.b).toEqual({ x: 120, y: 150 });
+  });
+
+  it("blocks hinged doors from rotating through movement-blocking walls", () => {
+    const map = testMap();
+    map.walls.push(createWall("door-1", "door", { x: 120, y: 90 }, { x: 120, y: 150 }, 8));
+    map.walls.push(createWall("wall-blocker", "solid", { x: 92, y: 128 }, { x: 152, y: 128 }, 8));
+    const room = createRoom("blocked-door-wall", map);
+    const door = room.map.walls.find((wall) => wall.id === "door-1")!;
+    door.angularVelocity = 0.8;
+    stepRoom(room);
+    expect(door.currentAngle).toBe(0);
+    expect(door.angularVelocity).toBe(0);
+    expect(door.b).toEqual({ x: 120, y: 150 });
+  });
+
+  it("ignores destroyed and non-movement-blocking walls when rotating doors", () => {
+    const map = testMap();
+    map.walls.push(createWall("door-1", "door", { x: 120, y: 90 }, { x: 120, y: 150 }, 8));
+    map.walls.push(createWall("destroyed-blocker", "solid", { x: 92, y: 128 }, { x: 152, y: 128 }, 8, { destroyed: true }));
+    map.walls.push(createWall("ghost-blocker", "transparent", { x: 92, y: 132 }, { x: 152, y: 132 }, 8, { blocksMovement: false }));
+    const room = createRoom("open-door-wall", map);
+    const door = room.map.walls.find((wall) => wall.id === "door-1")!;
+    door.angularVelocity = 0.08;
+    stepRoom(room);
+    expect(Math.abs(door.currentAngle ?? 0)).toBeGreaterThan(0);
+  });
+
+  it("ignores adjacent door frame wall pieces when rotating doors", () => {
+    const map = testMap();
+    map.walls.push(createWall("door-1", "door", { x: 120, y: 90 }, { x: 120, y: 150 }, 8));
+    map.walls.push(createWall("frame-top", "solid", { x: 70, y: 90 }, { x: 120, y: 90 }, 8));
+    map.walls.push(createWall("frame-bottom", "solid", { x: 70, y: 150 }, { x: 120, y: 150 }, 8));
+    const room = createRoom("door-frame", map);
+    const door = room.map.walls.find((wall) => wall.id === "door-1")!;
+    door.angularVelocity = 0.08;
+    stepRoom(room);
+    expect(Math.abs(door.currentAngle ?? 0)).toBeGreaterThan(0);
+  });
+
+  it("lets players pass through an opened doorway gap but blocks the current panel", () => {
+    const closedMap = testMap();
+    closedMap.walls.push(createWall("door-closed", "door", { x: 150, y: 90 }, { x: 150, y: 150 }, 8));
+    const closedRoom = activeRoom(closedMap);
+    closedRoom.players.p1.position = { x: 139, y: 120 };
+    applyClientMessage(closedRoom, "p1", { type: "command", seq: 1, tick: closedRoom.tick, move: { x: 1, y: 0 }, aim: 0, fire: false, use: "none" });
+    stepRoom(closedRoom);
+    expect(closedRoom.players.p1.position.x).toBeLessThan(145);
+
+    const openMap = testMap();
+    openMap.walls.push(createWall("door-open", "door", { x: 150, y: 90 }, { x: 150, y: 150 }, 8));
+    const openRoom = activeRoom(openMap);
+    const door = openRoom.map.walls.find((wall) => wall.id === "door-open")!;
+    door.currentAngle = -Math.PI / 2;
+    door.angularVelocity = 0;
+    door.a = door.hinge!;
+    door.b = { x: 210, y: 90 };
+    openRoom.players.p1.position = { x: 130, y: 120 };
+    applyClientMessage(openRoom, "p1", { type: "command", seq: 1, tick: openRoom.tick, move: { x: 1, y: 0 }, aim: 0, fire: false, use: "none" });
+    for (let i = 0; i < 6; i += 1) stepRoom(openRoom);
+    expect(openRoom.players.p1.position.x).toBeGreaterThan(150);
   });
 
   it("filters opponents outside the forward vision cone", () => {
@@ -157,13 +227,24 @@ describe("authoritative simulation", () => {
     applyClientMessage(room, "p1", { type: "command", seq: 2, tick: room.tick, move: { x: 0, y: 0 }, aim: 0, fire: false, use: "none", reload: true });
     stepRoom(room);
     expect(room.players.p1.isReloading).toBe(true);
-    for (let i = 0; i < 30; i += 1) stepRoom(room);
+    for (let i = 0; i < 60; i += 1) stepRoom(room);
     expect(room.players.p1.ammo).toBe(10);
     expect(room.players.p1.isReloading).toBe(false);
     room.players.p1.ammo = 0;
     applyClientMessage(room, "p1", { type: "command", seq: 3, tick: room.tick, move: { x: 0, y: 0 }, aim: 0, fire: true, use: "none" });
     stepRoom(room);
     expect(room.players.p1.isReloading).toBe(true);
+  });
+
+  it("processes reload even when movement commands arrive before the next tick", () => {
+    const room = activeRoom(testMap());
+    room.players.p1.ammo = 4;
+    applyClientMessage(room, "p1", { type: "command", seq: 10, tick: room.tick, move: { x: 0, y: 0 }, aim: 0, fire: false, use: "none", reload: true });
+    applyClientMessage(room, "p1", { type: "command", seq: 11, tick: room.tick, move: { x: 1, y: 0 }, aim: 0, fire: false, use: "none" });
+    stepRoom(room);
+    expect(room.players.p1.isReloading).toBe(true);
+    expect(snapshotFor(room, "p1").actionResults).toContainEqual({ seq: 10, action: "reload", accepted: true });
+    expect(room.players.p1.position.x).toBeGreaterThan(50);
   });
 
   it("deploys cameras that grant vision and die to one shot", () => {
@@ -179,6 +260,15 @@ describe("authoritative simulation", () => {
     applyClientMessage(room, "p2", { type: "command", seq: 2, tick: room.tick, move: { x: 0, y: 0 }, aim: Math.PI, fire: true, use: "none" });
     for (let i = 0; i < 3; i += 1) stepRoom(room);
     expect(camera.destroyed).toBe(true);
+  });
+
+  it("processes gadget deploy even when later movement updates overwrite continuous input", () => {
+    const room = activeRoom(testMap());
+    applyClientMessage(room, "p1", { type: "command", seq: 20, tick: room.tick, move: { x: 0, y: 0 }, aim: 0, fire: false, use: "none", gadget: "camera", gadgetTarget: { x: 80, y: 80 } });
+    applyClientMessage(room, "p1", { type: "command", seq: 21, tick: room.tick, move: { x: 1, y: 0 }, aim: 0, fire: false, use: "none" });
+    stepRoom(room);
+    expect(room.deployedCameras).toHaveLength(1);
+    expect(snapshotFor(room, "p1").actionResults).toContainEqual({ seq: 20, action: "gadget", accepted: true });
   });
 
   it("hides enemy cameras until seen while preserving owner camera vision", () => {
@@ -295,7 +385,34 @@ describe("authoritative simulation", () => {
     applyClientMessage(wallRoom, "p1", { type: "command", seq: 1, tick: wallRoom.tick, move: { x: 0, y: 0 }, aim: 0, fire: false, use: "none", gadget: "wall", gadgetTarget: { x: 150, y: 120 } });
     stepRoom(wallRoom);
     expect(wallRoom.map.walls.filter((wall) => wall.id.includes("-wall-"))).toHaveLength(0);
-    expect(wallRoom.players.p1.gadgets.wall).toBe(1);
+    expect(wallRoom.players.p1.gadgets.wall).toBe(2);
+  });
+
+  it("does not consume failed gadget placements and allows a later retry", () => {
+    const map = testMap();
+    map.walls.push(createWall("window", "transparent", { x: 120, y: 70 }, { x: 120, y: 170 }, 8));
+    const room = activeRoom(map);
+    applyClientMessage(room, "p1", { type: "command", seq: 1, tick: room.tick, move: { x: 0, y: 0 }, aim: 0, fire: false, use: "none", gadget: "camera", gadgetTarget: { x: 150, y: 120 } });
+    stepRoom(room);
+    expect(room.deployedCameras).toHaveLength(0);
+    expect(room.players.p1.gadgets.camera).toBe(1);
+    expect(snapshotFor(room, "p1").actionResults).toContainEqual({ seq: 1, action: "gadget", accepted: false, reason: "blocked-los" });
+    applyClientMessage(room, "p1", { type: "command", seq: 2, tick: room.tick, move: { x: 0, y: 0 }, aim: 0, fire: false, use: "none", gadget: "camera", gadgetTarget: { x: 80, y: 80 } });
+    stepRoom(room);
+    expect(room.deployedCameras).toHaveLength(1);
+    expect(room.players.p1.gadgets.camera).toBe(0);
+  });
+
+  it("deduplicates repeated action sequence numbers but keeps later distinct actions", () => {
+    const room = activeRoom(testMap());
+    applyClientMessage(room, "p1", { type: "command", seq: 1, tick: room.tick, move: { x: 0, y: 0 }, aim: 0, fire: false, use: "none", gadget: "wall", gadgetTarget: { x: 150, y: 120 } });
+    applyClientMessage(room, "p1", { type: "command", seq: 1, tick: room.tick, move: { x: 0, y: 0 }, aim: 0, fire: false, use: "none", gadget: "wall", gadgetTarget: { x: 170, y: 120 } });
+    stepRoom(room);
+    for (let i = 0; i < 24; i += 1) stepRoom(room);
+    applyClientMessage(room, "p1", { type: "command", seq: 2, tick: room.tick, move: { x: 0, y: 0 }, aim: 0, fire: false, use: "none", gadget: "wall", gadgetTarget: { x: 80, y: 80 } });
+    stepRoom(room);
+    expect(room.map.walls.filter((wall) => wall.id.includes("-wall-"))).toHaveLength(2);
+    expect(room.players.p1.gadgets.wall).toBe(0);
   });
 
   it("applies a short weapon lockout after successful gadget deployment", () => {
@@ -303,7 +420,7 @@ describe("authoritative simulation", () => {
     applyClientMessage(room, "p1", { type: "command", seq: 1, tick: room.tick, move: { x: 0, y: 0 }, aim: 0, fire: false, use: "none", gadget: "camera", gadgetTarget: { x: 80, y: 80 } });
     stepRoom(room);
     applyClientMessage(room, "p1", { type: "command", seq: 2, tick: room.tick, move: { x: 0, y: 0 }, aim: 0, fire: true, use: "none" });
-    for (let i = 0; i < 11; i += 1) stepRoom(room);
+    for (let i = 0; i < 23; i += 1) stepRoom(room);
     expect(room.players.p2.hp).toBe(5);
     stepRoom(room);
     expect(room.players.p2.hp).toBe(4);
@@ -315,10 +432,18 @@ describe("authoritative simulation", () => {
     stepRoom(room);
     expect(room.players.p1.gadgets.molotov).toBe(0);
     expect(room.molotovs).toHaveLength(1);
-    for (let i = 0; i < 15; i += 1) stepRoom(room);
+    for (let i = 0; i < 30; i += 1) stepRoom(room);
     expect(room.players.p2.hp).toBe(4);
-    for (let i = 0; i < 150; i += 1) stepRoom(room);
+    for (let i = 0; i < 300; i += 1) stepRoom(room);
     expect(room.molotovs).toHaveLength(0);
+  });
+
+  it("keeps molotov damage ticking without fresh client commands", () => {
+    const room = activeRoom(testMap());
+    applyClientMessage(room, "p1", { type: "command", seq: 1, tick: room.tick, move: { x: 0, y: 0 }, aim: 0, fire: false, use: "none", gadget: "molotov", gadgetTarget: { x: 250, y: 120 } });
+    stepRoom(room);
+    for (let i = 0; i < 30; i += 1) stepRoom(room);
+    expect(room.players.p2.hp).toBe(4);
   });
 
   it("deploys smoke that blocks vision but not bullets", () => {
@@ -331,7 +456,7 @@ describe("authoritative simulation", () => {
     expect(snapshotFor(room, "p1").visiblePlayers).toHaveLength(0);
 
     applyClientMessage(room, "p1", { type: "command", seq: 2, tick: room.tick, move: { x: 0, y: 0 }, aim: 0, fire: true, use: "none" });
-    for (let i = 0; i < 12; i += 1) stepRoom(room);
+    for (let i = 0; i < 24; i += 1) stepRoom(room);
     expect(room.players.p2.hp).toBe(4);
   });
 
@@ -339,8 +464,8 @@ describe("authoritative simulation", () => {
     const map = testMap();
     map.walls.push(createWall("fire-block", "solid", { x: 150, y: 70 }, { x: 150, y: 170 }, 8));
     const room = activeRoom(map);
-    room.molotovs.push({ id: "blocked-fire", owner: "p1", position: { x: 120, y: 120 }, radius: 160, createdAtTick: room.tick, expiresAtTick: room.tick + 150 });
-    for (let i = 0; i < 15; i += 1) stepRoom(room);
+    room.molotovs.push({ id: "blocked-fire", owner: "p1", position: { x: 120, y: 120 }, radius: 160, createdAtTick: room.tick, expiresAtTick: room.tick + 300 });
+    for (let i = 0; i < 30; i += 1) stepRoom(room);
     expect(room.players.p2.hp).toBe(5);
   });
 
@@ -372,8 +497,8 @@ describe("authoritative simulation", () => {
     stepRoom(walkRoom);
     const walkDistance = walkRoom.players.p1.position.x - 50;
     expect(walkDistance).toBeLessThan(runDistance);
-    expect(runDistance).toBeCloseTo(8, 3);
-    expect(walkDistance).toBeCloseTo(5.5, 3);
+    expect(runDistance).toBeCloseTo(4, 3);
+    expect(walkDistance).toBeCloseTo(2.75, 3);
   });
 
   it("sound sensors persist until destroyed by one bullet", () => {
@@ -387,7 +512,7 @@ describe("authoritative simulation", () => {
     expect(room.soundSensors[0]).toBe(sensor);
     expect(sensor.destroyed).not.toBe(true);
     applyClientMessage(room, "p1", { type: "command", seq: 2, tick: room.tick, move: { x: 0, y: 0 }, aim: 0, fire: true, use: "none" });
-    for (let i = 0; i < 12; i += 1) stepRoom(room);
+    for (let i = 0; i < 24; i += 1) stepRoom(room);
     applyClientMessage(room, "p1", { type: "command", seq: 3, tick: room.tick, move: { x: 0, y: 0 }, aim: 0, fire: true, use: "none" });
     stepRoom(room);
     expect(sensor.destroyed).toBe(true);
@@ -400,15 +525,15 @@ describe("authoritative simulation", () => {
     applyClientMessage(room, "p1", { type: "command", seq: 1, tick: room.tick, move: { x: 0, y: 0 }, aim: 0, fire: false, use: "none", gadget: "wall", gadgetTarget: { x: 150, y: 120 }, gadgetAngle: Math.PI / 2 });
     stepRoom(room);
     const wall = room.map.walls.find((candidate) => candidate.id.includes("-wall-"))!;
-    expect(room.players.p1.gadgets.wall).toBe(0);
+    expect(room.players.p1.gadgets.wall).toBe(1);
     expect(wall.maxHp).toBe(8);
     expect(Math.abs(wall.a.x - wall.b.x)).toBeLessThan(0.001);
     expect(snapshotFor(room, "p1").visiblePlayers).toHaveLength(0);
-    for (let i = 0; i < 12; i += 1) stepRoom(room);
+    for (let i = 0; i < 24; i += 1) stepRoom(room);
 
     for (let shot = 0; shot < 8; shot += 1) {
       applyClientMessage(room, "p1", { type: "command", seq: 2 + shot, tick: room.tick, move: { x: 0, y: 0 }, aim: 0, fire: true, use: "none" });
-      for (let i = 0; i < 3; i += 1) stepRoom(room);
+      for (let i = 0; i < 6; i += 1) stepRoom(room);
     }
     expect(wall.destroyed).toBe(true);
   });
@@ -417,10 +542,14 @@ describe("authoritative simulation", () => {
     const room = activeRoom(testMap());
     applyClientMessage(room, "p1", { type: "command", seq: 1, tick: room.tick, move: { x: 0, y: 0 }, aim: 0, fire: false, use: "none", gadget: "wall", gadgetTarget: { x: 150, y: 120 } });
     stepRoom(room);
+    for (let i = 0; i < 24; i += 1) stepRoom(room);
     applyClientMessage(room, "p1", { type: "command", seq: 2, tick: room.tick, move: { x: 0, y: 0 }, aim: 0, fire: false, use: "none", gadget: "wall", gadgetTarget: { x: 180, y: 120 } });
     stepRoom(room);
+    for (let i = 0; i < 24; i += 1) stepRoom(room);
+    applyClientMessage(room, "p1", { type: "command", seq: 3, tick: room.tick, move: { x: 0, y: 0 }, aim: 0, fire: false, use: "none", gadget: "wall", gadgetTarget: { x: 200, y: 120 } });
+    stepRoom(room);
     expect(room.players.p1.gadgets.wall).toBe(0);
-    expect(room.map.walls.filter((wall) => wall.id.includes("-wall-"))).toHaveLength(1);
+    expect(room.map.walls.filter((wall) => wall.id.includes("-wall-"))).toHaveLength(2);
   });
 
   it("enforces assault rifle cadence and kills a player in five hits", () => {
@@ -431,7 +560,7 @@ describe("authoritative simulation", () => {
     stepRoom(room);
     stepRoom(room);
     expect(room.players.p2.hp).toBe(4);
-    for (let i = 0; i < 15; i += 1) stepRoom(room);
+    for (let i = 0; i < 30; i += 1) stepRoom(room);
     expect(room.round.winner).toBe("p1");
     expect(room.round.scores.p1).toBe(1);
     expect(room.replay.events.some((event) => event.type === "kill" && event.target === "p2")).toBe(true);
@@ -456,7 +585,7 @@ describe("authoritative simulation", () => {
     const door = room.map.walls.find((wall) => wall.id === "door-reset")!;
     panel.destroyed = true;
     door.currentAngle = 1;
-    door.b = { x: 190, y: 130 };
+    door.b = { x: 190, y: 80 };
     room.deployedCameras.push({ id: "cam", owner: "p1", position: { x: 100, y: 100 }, radius: 120, hp: 1 });
     room.molotovs.push({ id: "molotov", owner: "p1", position: { x: 100, y: 100 }, radius: 55, createdAtTick: room.tick, expiresAtTick: room.tick + 100 });
     room.smokes.push({ id: "smoke", owner: "p1", position: { x: 100, y: 100 }, radius: 62, createdAtTick: room.tick, expiresAtTick: room.tick + 100 });
@@ -475,7 +604,7 @@ describe("authoritative simulation", () => {
     expect(room.smokes).toHaveLength(0);
     expect(room.soundSensors).toHaveLength(0);
     expect(room.map.walls.find((wall) => wall.id === "deployable-reset")).toBeUndefined();
-    expect(room.players.p1.gadgets).toEqual({ camera: 1, molotov: 1, smoke: 2, wall: 1, sound: 1 });
+    expect(room.players.p1.gadgets).toEqual({ camera: 1, molotov: 1, smoke: 2, wall: 2, sound: 1 });
     expect(room.slots.p1.lastSeenWalls.size).toBe(0);
   });
 
@@ -517,7 +646,7 @@ describe("authoritative simulation", () => {
     map.walls.push(createWall("door-target", "door", { x: 170, y: 80 }, { x: 170, y: 160 }, 8, { destructible: true }));
     const room = activeRoom(map);
     applyClientMessage(room, "p1", { type: "command", seq: 1, tick: room.tick, move: { x: 0, y: 0 }, aim: 0, fire: true, use: "none" });
-    for (let i = 0; i < 13; i += 1) stepRoom(room);
+    for (let i = 0; i < 31; i += 1) stepRoom(room);
     expect(room.map.walls.find((wall) => wall.id === "panel")?.destroyed).toBe(true);
     for (let i = 0; i < 4; i += 1) stepRoom(room);
     expect(room.map.walls.find((wall) => wall.id === "door-target")?.destroyed).not.toBe(true);
@@ -547,7 +676,7 @@ function activeRoom(map: MapDefinition) {
 
 function shootUntilRoundEnds(room: ReturnType<typeof activeRoom>): void {
   applyClientMessage(room, "p1", { type: "command", seq: room.tick, tick: room.tick, move: { x: 0, y: 0 }, aim: 0, fire: true, use: "none" });
-  for (let i = 0; i < 14 && room.round.phase === "active"; i += 1) stepRoom(room);
+  for (let i = 0; i < 31 && room.round.phase === "active"; i += 1) stepRoom(room);
 }
 
 function testMap(): MapDefinition {

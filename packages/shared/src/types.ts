@@ -133,6 +133,13 @@ export interface Detection {
   targetId?: PlayerId;
 }
 
+export interface ActionResult {
+  seq: number;
+  action: "reload" | "gadget" | "use";
+  accepted: boolean;
+  reason?: "out-of-range" | "blocked-los" | "no-count" | "action-lockout" | "round-inactive" | "invalid";
+}
+
 export interface ServerSnapshot {
   type: "snapshot";
   tick: number;
@@ -155,6 +162,7 @@ export interface ServerSnapshot {
   visiblePolygon: Vec2[];
   visibleCircles: VisionCircle[];
   explored: Vec2[];
+  actionResults: ActionResult[];
   debug?: DebugTruth;
 }
 

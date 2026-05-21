@@ -11,6 +11,7 @@ import {
   pointInCone,
   sampleMap,
   type AuthoritativeEvent,
+  type ActionResult,
   type ClientMessage,
   type DeployedCamera,
   type Detection,
@@ -74,16 +75,29 @@ interface AnalyticsEvent {
   data: Record<string, unknown>;
 }
 
+type InputState = Pick<PlayerCommand, "move" | "aim" | "fire" | "walk">;
+
+type PendingAction =
+  | { seq: number; type: "reload" }
+  | { seq: number; type: "use"; use: "breach" }
+  | { seq: number; type: "gadget"; gadget: GadgetKind; target: Vec2; angle?: number };
+
+type ActionRejectReason = NonNullable<ActionResult["reason"]>;
+
+type DeployResult = { accepted: true } | { accepted: false; reason: ActionRejectReason };
+
 interface PlayerSlot {
   id: PlayerId;
   connected: boolean;
   debug: boolean;
   reconnectToken: string;
-  lastCommand: PlayerCommand;
+  inputState: InputState;
+  pendingActions: PendingAction[];
+  seenActionSeqs: Set<string>;
+  actionResults: ActionResult[];
   explored: Vec2[];
   nextFireTick: number;
   nextActionTick: number;
-  lastGadgetSeq: number;
   lastSeenWalls: Map<string, Wall>;
   lastSeenCameras: Map<string, DeployedCamera>;
 }
@@ -158,11 +172,13 @@ function createSlot(id: PlayerId): PlayerSlot {
     connected: false,
     debug: false,
     reconnectToken: `${id}-${Math.random().toString(36).slice(2)}`,
-    lastCommand: { type: "command", seq: 0, tick: 0, move: { x: 0, y: 0 }, aim: 0, fire: false, use: "none" },
+    inputState: { move: { x: 0, y: 0 }, aim: 0, fire: false, walk: false },
+    pendingActions: [],
+    seenActionSeqs: new Set(),
+    actionResults: [],
     explored: [],
     nextFireTick: 0,
     nextActionTick: 0,
-    lastGadgetSeq: 0,
     lastSeenWalls: new Map(),
     lastSeenCameras: new Map()
   };
@@ -188,8 +204,67 @@ export function applyClientMessage(room: RoomState, playerId: PlayerId, message:
   }
   if (message.type !== "command") return;
   const command = { ...message, move: normalize(message.move), tick: room.tick };
-  room.slots[playerId].lastCommand = command;
+  const slot = room.slots[playerId];
+  slot.inputState = { move: command.move, aim: command.aim, fire: command.fire, walk: Boolean(command.walk) };
+  enqueueCommandActions(slot, command);
   room.replay.commands.push({ ...command, playerId });
+}
+
+function enqueueCommandActions(slot: PlayerSlot, command: PlayerCommand): void {
+  const actions: PendingAction[] = [];
+  if (command.reload) actions.push({ seq: command.seq, type: "reload" });
+  if (command.use === "breach") actions.push({ seq: command.seq, type: "use", use: "breach" });
+  if (command.gadget && command.gadget !== "none" && command.gadgetTarget) {
+    actions.push({ seq: command.seq, type: "gadget", gadget: command.gadget, target: command.gadgetTarget, ...(command.gadgetAngle !== undefined ? { angle: command.gadgetAngle } : {}) });
+  }
+  for (const action of actions) {
+    const actionKey = `${action.seq}:${action.type}`;
+    if (slot.seenActionSeqs.has(actionKey)) continue;
+    slot.seenActionSeqs.add(actionKey);
+    slot.pendingActions.push(action);
+  }
+  if (slot.seenActionSeqs.size > 256) {
+    slot.seenActionSeqs = new Set([...slot.seenActionSeqs].slice(-128));
+  }
+}
+
+function rejectPendingActions(room: RoomState, reason: ActionRejectReason): void {
+  for (const slot of Object.values(room.slots)) {
+    while (slot.pendingActions.length > 0) {
+      const action = slot.pendingActions.shift()!;
+      recordActionResult(slot, action.seq, action.type, false, reason);
+    }
+  }
+}
+
+function processPendingActions(room: RoomState, player: PlayerState, slot: PlayerSlot): void {
+  while (slot.pendingActions.length > 0) {
+    const action = slot.pendingActions.shift()!;
+    if (action.type === "reload") {
+      const accepted = startReload(player, room.tick);
+      recordActionResult(slot, action.seq, "reload", accepted, accepted ? undefined : "invalid");
+      continue;
+    }
+    if (action.type === "use") {
+      const accepted = breachNearestWall(room, player);
+      recordActionResult(slot, action.seq, "use", accepted, accepted ? undefined : "invalid");
+      continue;
+    }
+    if (room.tick < slot.nextActionTick) {
+      recordActionResult(slot, action.seq, "gadget", false, "action-lockout");
+      continue;
+    }
+    const result = deployGadget(room, player, action.gadget, action.target, action.angle ?? player.aim);
+    recordActionResult(slot, action.seq, "gadget", result.accepted, result.accepted ? undefined : result.reason);
+    if (!result.accepted) continue;
+    slot.nextActionTick = room.tick + POST_GADGET_LOCKOUT_TICKS;
+    slot.nextFireTick = Math.max(slot.nextFireTick, slot.nextActionTick);
+  }
+}
+
+function recordActionResult(slot: PlayerSlot, seq: number, action: ActionResult["action"], accepted: boolean, reason?: ActionRejectReason): void {
+  slot.actionResults.push({ seq, action, accepted, ...(reason ? { reason } : {}) });
+  slot.actionResults = slot.actionResults.slice(-32);
 }
 
 export function stepRoom(room: RoomState): void {
@@ -198,7 +273,6 @@ export function stepRoom(room: RoomState): void {
   room.molotovs = room.molotovs.filter((zone) => zone.expiresAtTick >= room.tick);
   room.smokes = room.smokes.filter((zone) => zone.expiresAtTick >= room.tick);
   room.soundSensors = room.soundSensors.filter((zone) => !zone.destroyed);
-  integrateDoors(room);
   if (room.round.phase === "ended") return;
   if (room.round.phase === "countdown" && room.tick >= room.round.startsAtTick) {
     room.round.phase = "active";
@@ -207,33 +281,31 @@ export function stepRoom(room: RoomState): void {
     delete room.round.nextRoundStartsAtTick;
     pushEvent(room, { type: "round-start", tick: room.tick });
   }
-  if (room.round.phase !== "active") return;
+  if (room.round.phase !== "active") {
+    integrateDoors(room);
+    rejectPendingActions(room, "round-inactive");
+    return;
+  }
 
   for (const player of Object.values(room.players)) {
     if (!player.alive) continue;
-    const command = room.slots[player.id].lastCommand;
+    const slot = room.slots[player.id];
+    const input = slot.inputState;
     completeReload(player, room.tick);
-    player.walking = Boolean(command.walk);
-    const speed = player.walking ? PLAYER_WALK_SPEED : PLAYER_SPEED;
-    const delta = { x: command.move.x * speed, y: command.move.y * speed };
+    player.walking = Boolean(input.walk);
+const speed = player.walking ? PLAYER_WALK_SPEED : PLAYER_SPEED;
+    const delta = { x: input.move.x * speed, y: input.move.y * speed };
     const desired = add(player.position, delta);
-    pushDoors(room.map, desired, delta);
-    const next = moveWithWallCollision(room.map, player.position, desired, PLAYER_RADIUS);
+    collectDoorPushes(room.map, player.position, desired, delta);
+    const next = movePlayerWithSweptCollision(room.map, player.position, desired, PLAYER_RADIUS);
     player.velocity = { x: next.x - player.position.x, y: next.y - player.position.y };
     player.position = next;
-    player.aim = command.aim;
-    if (command.reload) startReload(player, room.tick);
-    if (command.gadget && command.gadget !== "none" && command.gadgetTarget && room.tick >= room.slots[player.id].nextActionTick && command.seq !== room.slots[player.id].lastGadgetSeq) {
-      room.slots[player.id].lastGadgetSeq = command.seq;
-      if (deployGadget(room, player, command.gadget, command.gadgetTarget, command.gadgetAngle ?? player.aim)) {
-        room.slots[player.id].nextActionTick = room.tick + POST_GADGET_LOCKOUT_TICKS;
-        room.slots[player.id].nextFireTick = Math.max(room.slots[player.id].nextFireTick, room.slots[player.id].nextActionTick);
-      }
-    }
-    if (command.use === "breach") breachNearestWall(room, player);
-    if (command.fire && room.tick >= room.slots[player.id].nextActionTick) resolveShot(room, player.id);
+    player.aim = input.aim;
+    processPendingActions(room, player, slot);
+    if (input.fire && room.tick >= slot.nextActionTick) resolveShot(room, player.id);
     room.analytics.push({ type: "movement-sample", tick: room.tick, data: { playerId: player.id, position: player.position } });
   }
+  integrateDoors(room);
 
   resolveSensors(room);
   resolveSoundSensors(room);
@@ -275,37 +347,83 @@ function initializeWallHp(wall: MapDefinition["walls"][number]): MapDefinition["
   return { ...wall, maxHp, hp: wall.hp ?? maxHp };
 }
 
-function pushDoors(map: MapDefinition, desired: Vec2, delta: Vec2): void {
+function collectDoorPushes(map: MapDefinition, current: Vec2, desired: Vec2, delta: Vec2): void {
   if (Math.hypot(delta.x, delta.y) < 0.01) return;
   for (const door of map.walls) {
     if (door.kind !== "door" || !door.hinge || door.destroyed) continue;
-    if (distanceToSegment(desired, door.a, door.b) > PLAYER_RADIUS + Math.max(10, door.thickness)) continue;
+    const contactDistance = PLAYER_RADIUS + Math.max(10, door.thickness) + 3;
+    const contact = distanceToSegment(current, door.a, door.b) <= contactDistance
+      || distanceToSegment(desired, door.a, door.b) <= contactDistance
+      || Boolean(lineIntersection(current, desired, door.a, door.b));
+    if (!contact) continue;
     const radius = { x: desired.x - door.hinge.x, y: desired.y - door.hinge.y };
     const torque = radius.x * delta.y - radius.y * delta.x;
-    door.angularVelocity = (door.angularVelocity ?? 0) + Math.max(-0.08, Math.min(0.08, torque * 0.0009));
+    door.angularVelocity = (door.angularVelocity ?? 0) + Math.max(-0.045, Math.min(0.045, torque * 0.0011));
   }
+}
+
+function movePlayerWithSweptCollision(map: MapDefinition, current: Vec2, desired: Vec2, radius: number): Vec2 {
+  const totalDistance = distance(current, desired);
+  const steps = Math.max(1, Math.ceil(totalDistance / Math.max(1, radius * 0.45)));
+  let position = current;
+  for (let step = 1; step <= steps; step += 1) {
+    const target = {
+      x: current.x + ((desired.x - current.x) * step) / steps,
+      y: current.y + ((desired.y - current.y) * step) / steps
+    };
+    const next = moveWithWallCollision(map, position, target, radius);
+    if (next === position) return position;
+    position = next;
+  }
+  return position;
 }
 
 function integrateDoors(room: RoomState): void {
   for (const door of room.map.walls) {
     if (door.kind !== "door" || !door.hinge || !door.closedB || door.destroyed) continue;
-    const previousAngle = door.currentAngle ?? 0;
-    const previousB = door.b;
-    const angle = Math.max(-DOOR_MAX_ANGLE, Math.min(DOOR_MAX_ANGLE, (door.currentAngle ?? 0) + (door.angularVelocity ?? 0)));
-    const nextB = rotateDoorEndpoint(door.hinge, door.closedB, angle);
-    if (doorWouldPushIntoPlayer(room, door, nextB)) {
-      door.currentAngle = previousAngle;
-      door.angularVelocity = 0;
-      door.a = door.hinge;
-      door.b = previousB;
-      continue;
+    const angularVelocity = door.angularVelocity ?? 0;
+    if (Math.abs(angularVelocity) >= 0.0005) {
+      for (let substep = 0; substep < 3; substep += 1) {
+        const previousAngle = door.currentAngle ?? 0;
+        const previousB = door.b;
+        const angle = Math.max(-DOOR_MAX_ANGLE, Math.min(DOOR_MAX_ANGLE, previousAngle + angularVelocity / 3));
+        const nextB = rotateDoorEndpoint(door.hinge, door.closedB, angle);
+        if (doorWouldPushIntoPlayer(room, door, nextB) || doorWouldHitWall(room, door, nextB)) {
+          door.currentAngle = previousAngle;
+          door.angularVelocity = 0;
+          door.a = door.hinge;
+          door.b = previousB;
+          break;
+        }
+        door.currentAngle = angle;
+        door.a = door.hinge;
+        door.b = nextB;
+      }
     }
-    door.currentAngle = angle;
     door.angularVelocity = (door.angularVelocity ?? 0) * DOOR_DAMPING;
     if (Math.abs(door.angularVelocity) < 0.0005) door.angularVelocity = 0;
-    door.a = door.hinge;
-    door.b = nextB;
   }
+}
+
+function doorWouldHitWall(room: RoomState, door: MapDefinition["walls"][number], nextB: Vec2): boolean {
+  if (!door.hinge) return false;
+  const threshold = door.thickness / 2;
+  return room.map.walls.some((wall) => {
+    if (wall.id === door.id || wall.destroyed || !wall.blocksMovement) return false;
+    if (wall.kind === "door" && (!wall.hinge || !wall.closedB)) return false;
+    if (wallSharesDoorFramePoint(door, wall, threshold + wall.thickness / 2 + 2)) return false;
+    return segmentsOverlapWithThickness(door.hinge!, nextB, wall.a, wall.b, threshold + wall.thickness / 2);
+  });
+}
+
+function wallSharesDoorFramePoint(door: MapDefinition["walls"][number], wall: MapDefinition["walls"][number], tolerance: number): boolean {
+  if (!door.hinge || !door.closedB) return false;
+  return [wall.a, wall.b].some((point) => distance(point, door.hinge!) <= tolerance || distance(point, door.closedB!) <= tolerance);
+}
+
+function segmentsOverlapWithThickness(a: Vec2, b: Vec2, c: Vec2, d: Vec2, threshold: number): boolean {
+  if (lineIntersection(a, b, c, d)) return true;
+  return distanceToSegment(a, c, d) < threshold || distanceToSegment(b, c, d) < threshold || distanceToSegment(c, a, b) < threshold || distanceToSegment(d, a, b) < threshold;
 }
 
 function doorWouldPushIntoPlayer(room: RoomState, door: MapDefinition["walls"][number], nextB: Vec2): boolean {
@@ -332,49 +450,50 @@ function completeReload(player: PlayerState, tick: number): void {
   delete player.reloadEndsAtTick;
 }
 
-function startReload(player: PlayerState, tick: number): void {
-  if (player.isReloading || player.ammo >= player.magSize) return;
+function startReload(player: PlayerState, tick: number): boolean {
+  if (player.isReloading || player.ammo >= player.magSize) return false;
   player.isReloading = true;
   player.reloadEndsAtTick = tick + RELOAD_TICKS;
+  return true;
 }
 
-function deployGadget(room: RoomState, player: PlayerState, gadget: GadgetKind, target: Vec2, angle: number): boolean {
-  if (player.gadgets[gadget] <= 0) return false;
+function deployGadget(room: RoomState, player: PlayerState, gadget: GadgetKind, target: Vec2, angle: number): DeployResult {
+  if (player.gadgets[gadget] <= 0) return { accepted: false, reason: "no-count" };
   const maxRange = gadget === "camera" ? CAMERA_RANGE : gadget === "wall" ? DEPLOYABLE_WALL_RANGE : gadget === "smoke" ? SMOKE_RANGE : MOLOTOV_RANGE;
   const range = gadget === "sound" ? SOUND_SENSOR_RANGE : maxRange;
   const thrown = gadget === "molotov" || gadget === "smoke" ? resolveThrownTarget(room.map, player.position, target, range) : undefined;
   const position = thrown?.position ?? clampTarget(room.map, player.position, target, range);
-  if (thrown && !thrown.valid) return false;
-  if (!hasPlacementLineOfSight(room.map, player.position, position)) return false;
-  if ((gadget === "camera" || gadget === "sound" || gadget === "wall") && !isPlacementClear(room.map, position, gadget === "wall" ? PLAYER_RADIUS : 7)) return false;
+  if (thrown && !thrown.valid) return { accepted: false, reason: "out-of-range" };
+  if (!hasPlacementLineOfSight(room.map, player.position, position)) return { accepted: false, reason: "blocked-los" };
+  if ((gadget === "camera" || gadget === "sound" || gadget === "wall") && !isPlacementClear(room.map, position, gadget === "wall" ? PLAYER_RADIUS : 7)) return { accepted: false, reason: "invalid" };
   player.gadgets[gadget] -= 1;
   if (gadget === "camera") {
     const camera: DeployedCamera = { id: `${player.id}-cam-${room.tick}-${room.deployedCameras.length}`, owner: player.id, position, radius: CAMERA_RADIUS, hp: 1 };
     room.deployedCameras.push(camera);
     room.slots[player.id].lastSeenCameras.set(camera.id, structuredClone(camera));
     pushEvent(room, { type: "camera-deployed", tick: room.tick, playerId: player.id, cameraId: camera.id });
-    return true;
+    return { accepted: true };
   } else if (gadget === "molotov") {
     const zone: MolotovZone = { id: `${player.id}-molotov-${room.tick}-${room.molotovs.length}`, owner: player.id, position, radius: MOLOTOV_RADIUS, createdAtTick: room.tick, expiresAtTick: room.tick + MOLOTOV_TICKS };
     room.molotovs.push(zone);
     pushEvent(room, { type: "molotov-deployed", tick: room.tick, playerId: player.id, molotovId: zone.id });
-    return true;
+    return { accepted: true };
   } else if (gadget === "smoke") {
     const zone: SmokeZone = { id: `${player.id}-smoke-${room.tick}-${room.smokes.length}`, owner: player.id, position, radius: SMOKE_RADIUS, createdAtTick: room.tick, expiresAtTick: room.tick + SMOKE_TICKS };
     room.smokes.push(zone);
     pushEvent(room, { type: "smoke-deployed", tick: room.tick, playerId: player.id, smokeId: zone.id });
-    return true;
+    return { accepted: true };
   } else if (gadget === "sound") {
     const sensor: SoundSensorZone = { id: `${player.id}-sound-${room.tick}-${room.soundSensors.length}`, owner: player.id, position, radius: SOUND_SENSOR_RADIUS, hp: 1, createdAtTick: room.tick };
     room.soundSensors.push(sensor);
     pushEvent(room, { type: "sound-sensor-deployed", tick: room.tick, playerId: player.id, sensorId: sensor.id });
-    return true;
+    return { accepted: true };
   } else {
     const wall = createDeployableWall(`${player.id}-wall-${room.tick}-${room.map.walls.length}`, position, angle);
     room.map.walls.push(wall);
     room.slots[player.id].lastSeenWalls.set(wall.id, structuredClone(wall));
     pushEvent(room, { type: "deployable-wall-deployed", tick: room.tick, playerId: player.id, wallId: wall.id });
-    return true;
+    return { accepted: true };
   }
 }
 
@@ -533,10 +652,12 @@ function resetPlayersForRound(room: RoomState): void {
     player.walking = false;
     delete player.reloadEndsAtTick;
     player.gadgets = { ...GADGET_LOADOUT };
-    room.slots[player.id].lastCommand = { type: "command", seq: 0, tick: room.tick, move: { x: 0, y: 0 }, aim: spawn.angle, fire: false, use: "none", walk: false };
+    room.slots[player.id].inputState = { move: { x: 0, y: 0 }, aim: spawn.angle, fire: false, walk: false };
+    room.slots[player.id].pendingActions = [];
+    room.slots[player.id].seenActionSeqs.clear();
+    room.slots[player.id].actionResults = [];
     room.slots[player.id].nextFireTick = room.tick;
     room.slots[player.id].nextActionTick = room.tick;
-    room.slots[player.id].lastGadgetSeq = 0;
     room.slots[player.id].lastSeenWalls.clear();
     room.slots[player.id].lastSeenCameras.clear();
   }
@@ -596,15 +717,16 @@ function resolveSoundSensors(room: RoomState): void {
   }
 }
 
-function breachNearestWall(room: RoomState, player: PlayerState): void {
+function breachNearestWall(room: RoomState, player: PlayerState): boolean {
   const target = room.map.walls
     .filter((wall) => wall.destructible && wall.kind !== "door" && !wall.destroyed)
     .map((wall) => ({ wall, distance: distanceToSegment(player.position, wall.a, wall.b) }))
     .filter(({ distance: wallDistance }) => wallDistance <= 52)
     .sort((a, b) => a.distance - b.distance)[0]?.wall;
-  if (!target) return;
+  if (!target) return false;
   target.destroyed = true;
   pushEvent(room, { type: "wall-destroyed", tick: room.tick, wallId: target.id, playerId: player.id });
+  return true;
 }
 
 function resolveSensors(room: RoomState): void {
@@ -659,7 +781,8 @@ export function snapshotFor(room: RoomState, playerId: PlayerId): ServerSnapshot
     shotImpacts: visibleShotImpacts,
     visiblePolygon: polygon,
     visibleCircles: room.deployedCameras.filter((camera) => camera.owner === playerId && !camera.destroyed).map((camera) => ({ position: camera.position, radius: camera.radius })),
-    explored: room.slots[playerId].explored
+    explored: room.slots[playerId].explored,
+    actionResults: room.slots[playerId].actionResults.slice(-12)
   };
 
   if (debug) {

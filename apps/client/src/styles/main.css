@@ -345,6 +345,23 @@ canvas {
   gap: 8px;
 }
 
+.room-refresh {
+  height: 4px;
+  overflow: hidden;
+  border: 1px solid rgba(118, 219, 255, 0.22);
+  background: rgba(5, 12, 18, 0.72);
+  border-radius: 3px;
+}
+
+.room-refresh i {
+  display: block;
+  width: 100%;
+  height: 100%;
+  transform: scaleX(0);
+  transform-origin: left center;
+  background: #5df2b6;
+}
+
 .room-list button {
   border: 1px solid rgba(118, 219, 255, 0.28);
   background: rgba(5, 12, 18, 0.92);

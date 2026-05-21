@@ -8,6 +8,7 @@ const GADGET_RANGES: Record<GadgetKind, number> = { camera: 180, molotov: 220, s
 const GADGET_RADII: Record<Exclude<GadgetKind, "wall">, number> = { camera: 120, molotov: 55, smoke: 62, sound: 135 };
 const DEPLOYABLE_WALL_LENGTH = 36;
 const DEPLOYABLE_WALL_THICKNESS = 10;
+const ROOM_REFRESH_MS = 5000;
 
 interface GadgetPreviewTarget {
   position: Vec2;
@@ -35,7 +36,10 @@ export class PlayScene extends Phaser.Scene {
   private selectedGadget: GadgetKind | "none" = "none";
   private wallAngle = 0;
   private queuedDeploy: { gadget: GadgetKind; target: Vec2; angle?: number } | undefined = undefined;
-  private pendingDeploy: GadgetKind | undefined = undefined;
+  private pendingDeploy: { gadget: GadgetKind; seq: number } | undefined = undefined;
+  private roomRefreshTimer: number | undefined = undefined;
+  private roomRefreshStartedAt = 0;
+  private refreshBar: HTMLElement | undefined = undefined;
 
   constructor() {
     super("play");
@@ -52,7 +56,10 @@ export class PlayScene extends Phaser.Scene {
       this.wallAngle += (dy > 0 ? 1 : -1) * (Math.PI / 12);
     });
     this.createLobby();
-    this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => this.shell?.remove());
+    this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
+      this.stopRoomRefresh();
+      this.shell?.remove();
+    });
   }
 
   update(): void {
@@ -80,9 +87,10 @@ export class PlayScene extends Phaser.Scene {
       ...(deploy ? { gadgetTarget: deploy.target } : {}),
       ...(deploy?.angle !== undefined ? { gadgetAngle: deploy.angle } : {})
     };
-    if (this.snapshot.round.phase !== "ended") this.send({ type: "command", seq: ++this.seq, tick: this.snapshot.tick, ...command });
+    const seq = ++this.seq;
+    if (this.snapshot.round.phase !== "ended") this.send({ type: "command", seq, tick: this.snapshot.tick, ...command });
     if (deploy) {
-      this.pendingDeploy = deploy.gadget;
+      this.pendingDeploy = { gadget: deploy.gadget, seq };
       this.queuedDeploy = undefined;
     }
     this.renderSnapshot(this.snapshot);
@@ -103,6 +111,7 @@ export class PlayScene extends Phaser.Scene {
           <button class="primary-action" data-action="create">Create Game</button>
           <button class="secondary-action" data-action="join">Join Game</button>
         </div>
+        <div class="room-refresh" aria-hidden="true"><i></i></div>
         <div class="room-list"></div>
         <div class="play-hud"></div>
         <div class="match-actions" hidden>
@@ -113,6 +122,7 @@ export class PlayScene extends Phaser.Scene {
     `;
     document.body.appendChild(this.shell);
     this.hud = this.shell.querySelector<HTMLElement>(".play-hud") ?? undefined;
+    this.refreshBar = this.shell.querySelector<HTMLElement>(".room-refresh i") ?? undefined;
     this.shell.querySelector("[data-action='create']")?.addEventListener("click", () => void this.createGame());
     this.shell.querySelector("[data-action='join']")?.addEventListener("click", () => void this.joinGame());
     this.shell.querySelector("[data-action='rematch']")?.addEventListener("click", () => {
@@ -122,6 +132,7 @@ export class PlayScene extends Phaser.Scene {
     });
     this.shell.querySelector("[data-action='lobby']")?.addEventListener("click", () => this.returnToLobby());
     void this.refreshRooms();
+    this.startRoomRefresh();
   }
 
   private async createGame(): Promise<void> {
@@ -154,9 +165,28 @@ export class PlayScene extends Phaser.Scene {
     } catch {
       container.innerHTML = `<span>Room list unavailable.</span>`;
     }
+    this.roomRefreshStartedAt = performance.now();
+    if (this.refreshBar) this.refreshBar.style.transform = "scaleX(0)";
+  }
+
+  private startRoomRefresh(): void {
+    this.stopRoomRefresh();
+    this.roomRefreshStartedAt = performance.now();
+    this.roomRefreshTimer = window.setInterval(() => {
+      const elapsed = performance.now() - this.roomRefreshStartedAt;
+      const progress = Math.min(1, elapsed / ROOM_REFRESH_MS);
+      if (this.refreshBar) this.refreshBar.style.transform = `scaleX(${progress})`;
+      if (progress >= 1) void this.refreshRooms();
+    }, 100);
+  }
+
+  private stopRoomRefresh(): void {
+    if (this.roomRefreshTimer !== undefined) window.clearInterval(this.roomRefreshTimer);
+    this.roomRefreshTimer = undefined;
   }
 
   private connect(hello: { mode: "create" | "join"; mapId?: string; roomId?: string; debug: boolean }): void {
+    this.stopRoomRefresh();
     this.socket?.close();
     this.snapshot = undefined;
     this.welcome = undefined;
@@ -175,13 +205,14 @@ export class PlayScene extends Phaser.Scene {
       this.welcome = message;
       this.shell?.classList.add("in-game");
       drawMap(this.mapLayer!, message.map);
-      this.setHud(`Room ${message.roomId} | ${message.playerId.toUpperCase()} | ${message.map.name}`);
+      this.setHud(`Room ${message.roomId} | ${message.playerId.toUpperCase()} | ${message.map.name} | waiting for player`);
     } else if (message.type === "snapshot") {
       if (this.pendingDeploy) {
-        const before = this.snapshot?.self.gadgets[this.pendingDeploy] ?? Number.POSITIVE_INFINITY;
-        const after = message.self.gadgets[this.pendingDeploy];
-        if (after < before) {
+        const result = message.actionResults.find((candidate) => candidate.action === "gadget" && candidate.seq === this.pendingDeploy?.seq);
+        if (result?.accepted) {
           this.selectedGadget = "none";
+          this.pendingDeploy = undefined;
+        } else if (result && !result.accepted) {
           this.pendingDeploy = undefined;
         }
       }
@@ -322,13 +353,15 @@ export class PlayScene extends Phaser.Scene {
   }
 
   private queueGadgetDeploy(pointer: Phaser.Input.Pointer): void {
-    if (!this.snapshot || this.selectedGadget === "none" || pointer.button !== 0) return;
+    if (!this.snapshot || this.selectedGadget === "none" || this.pendingDeploy || pointer.button !== 0) return;
     const target = pointer.event?.target as HTMLElement | null;
     if (target?.closest?.(".play-panel")) return;
     const available = this.snapshot.self.gadgets[this.selectedGadget] ?? 0;
     if (available <= 0) return;
     const world = this.cameras.main.getWorldPoint(pointer.x, pointer.y);
-    const deployTarget = this.resolveGadgetTarget(this.snapshot.self.position, world, this.selectedGadget).position;
+    const resolved = this.resolveGadgetTarget(this.snapshot.self.position, world, this.selectedGadget);
+    if (resolved.invalid) return;
+    const deployTarget = resolved.position;
     this.queuedDeploy = {
       gadget: this.selectedGadget,
       target: deployTarget,
@@ -354,7 +387,7 @@ export class PlayScene extends Phaser.Scene {
     if (!this.welcome) return;
     const round = snapshot.round;
     const countdown = Math.max(0, Math.ceil(((round.phase === "countdown" ? round.startsAtTick : round.endsAtTick) - snapshot.tick) / 30));
-    const time = round.phase === "active" ? formatTime(countdown) : round.phase === "countdown" ? `starts in ${countdown}` : "ended";
+    const time = round.phase === "lobby" ? "waiting for player" : round.phase === "active" ? formatTime(countdown) : round.phase === "countdown" ? `starts in ${countdown}` : "ended";
     const roundResult = round.winner ? ` | round ${round.winner === "draw" ? "draw" : `${round.winner.toUpperCase()} won`}` : "";
     const score = `${round.scores.p1}-${round.scores.p2}`;
     if (round.matchWinner) {

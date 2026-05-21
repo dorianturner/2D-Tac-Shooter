@@ -1,6 +1,6 @@
 import type { GadgetKind } from "@tac/shared";
 
-export const TICK_RATE = 30;
+export const TICK_RATE = 60;
 export const TICK_MS = 1000 / TICK_RATE;
 export const PLAYER_SPEED = 240 / TICK_RATE;
 export const PLAYER_WALK_SPEED = 165 / TICK_RATE;
@@ -9,7 +9,7 @@ export const PLAYER_MAX_HP = 5;
 export const VIEW_RANGE = 260;
 export const VIEW_FOV = (100 * Math.PI) / 180;
 export const FIRE_RANGE = 520;
-export const FIRE_COOLDOWN_TICKS = 3;
+export const FIRE_COOLDOWN_TICKS = Math.round(TICK_RATE / 10);
 export const MAG_SIZE = 10;
 export const RELOAD_TICKS = TICK_RATE;
 
@@ -37,7 +37,7 @@ export const SOUND_SENSOR_TRIGGER_TICKS = 18;
 export const SOUND_SENSOR_SPEED_THRESHOLD = 0.55;
 export const SOUND_SENSOR_HIT_RADIUS = 8;
 
-export const POST_GADGET_LOCKOUT_TICKS = 12;
+export const POST_GADGET_LOCKOUT_TICKS = Math.round(TICK_RATE * 0.4);
 
 export const ROUND_COUNTDOWN_TICKS = 45;
 export const ROUND_TICKS = 90 * TICK_RATE;
@@ -48,6 +48,6 @@ export const GADGET_LOADOUT: Record<GadgetKind, number> = {
   camera: 1,
   molotov: 1,
   smoke: 2,
-  wall: 1,
+  wall: 2,
   sound: 1
 };
