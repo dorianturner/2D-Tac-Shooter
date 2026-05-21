@@ -1,6 +1,6 @@
 import type { GadgetKind } from "@tac/shared";
 
-export const TICK_RATE = 60;
+export const TICK_RATE = 120;
 export const TICK_MS = 1000 / TICK_RATE;
 export const PLAYER_SPEED = 240 / TICK_RATE;
 export const PLAYER_WALK_SPEED = 165 / TICK_RATE;
@@ -44,7 +44,7 @@ export const ROUND_TICKS = 90 * TICK_RATE;
 export const DOOR_MAX_ANGLE = 1.92;
 export const DOOR_DAMPING = 0.68;
 export const DOOR_PUSH_STRENGTH = 0.034;
-export const DOOR_RETURN_STRENGTH = 0.0014;
+export const DOOR_RETURN_STRENGTH = 0;
 export const DOOR_MAX_ANGULAR_SPEED = 0.06;
 export const DOOR_MAX_ANGULAR_ACCELERATION = 0.018;
 export const DOOR_COLLISION_SUBSTEPS = 6;

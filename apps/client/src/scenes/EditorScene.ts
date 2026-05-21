@@ -358,15 +358,63 @@ export class EditorScene extends Phaser.Scene {
   private drawEditorWall(wall: Wall): void {
     const kind = normalizedKind(wall);
     const selected = this.selectedIds.has(wall.id);
-    const color = kind === "door" ? colors.sensor : kind === "mesh" ? 0xb6f2df : kind === "transparent" ? 0x67d7ff : colors.wall;
-    this.overlay!.lineStyle(selected ? wall.thickness + 7 : wall.thickness, selected ? colors.warning : color, selected ? 0.95 : kind === "transparent" ? 0.5 : 0.9);
-    if (kind === "transparent" || kind === "mesh") drawDashedLine(this.overlay!, wall.a, wall.b, kind === "mesh" ? 8 : 18, kind === "mesh" ? 6 : 8);
-    else this.overlay!.lineBetween(wall.a.x, wall.a.y, wall.b.x, wall.b.y);
+    
+    // Draw destructible walls completely orange
     if (wall.destructible) {
-      this.overlay!.lineStyle(2, colors.destructible, 0.98);
+      this.overlay!.lineStyle(selected ? wall.thickness + 7 : wall.thickness, selected ? colors.warning : colors.destructible, 0.98);
       this.overlay!.lineBetween(wall.a.x, wall.a.y, wall.b.x, wall.b.y);
+    } else if (kind === "mesh") {
+      // Draw mesh walls as X's
+      const dx = wall.b.x - wall.a.x;
+      const dy = wall.b.y - wall.a.y;
+      const length = Math.hypot(dx, dy);
+      const offset = 8; // Fixed pixel offset
+      this.overlay!.lineStyle(selected ? (wall.thickness + 7) / 2 : wall.thickness / 2, selected ? colors.warning : 0xb6f2df, selected ? 0.95 : 0.9);
+      if (length > 0) {
+        const normX = dx / length;
+        const normY = dy / length;
+        const perpX = -normY * offset;
+        const perpY = normX * offset;
+        this.overlay!.lineBetween(wall.a.x - perpX, wall.a.y - perpY, wall.b.x + perpX, wall.b.y + perpY);
+        this.overlay!.lineBetween(wall.a.x + perpX, wall.a.y + perpY, wall.b.x - perpX, wall.b.y - perpY);
+      }
+    } else if (kind === "transparent") {
+      // Draw transparent walls as dashed lines
+      this.overlay!.lineStyle(selected ? wall.thickness + 7 : wall.thickness, selected ? colors.warning : 0x67d7ff, selected ? 0.95 : 0.5);
+      drawDashedLine(this.overlay!, wall.a, wall.b, 18, 8);
+    } else {
+      // Draw other walls normally
+      const color = kind === "door" ? colors.sensor : colors.wall;
+      this.overlay!.lineStyle(selected ? wall.thickness + 7 : wall.thickness, selected ? colors.warning : color, selected ? 0.95 : 0.9);
+      this.overlay!.lineBetween(wall.a.x, wall.a.y, wall.b.x, wall.b.y);
+      
+      // Draw door swing arc
+      if (kind === "door" && wall.hinge && wall.closedB) {
+        const hingePos = wall.hinge;
+        const length = Math.hypot(wall.closedB.x - hingePos.x, wall.closedB.y - hingePos.y);
+        const closedAngle = Math.atan2(wall.closedB.y - hingePos.y, wall.closedB.x - hingePos.x);
+        const maxAngle = 1.92; // From config
+        
+        // Draw radius circle in faint color
+        this.overlay!.lineStyle(1, colors.sensor, 0.3);
+        this.overlay!.strokeCircle(hingePos.x, hingePos.y, length);
+        
+        // Draw arc showing swing range
+        this.overlay!.lineStyle(2, colors.sensor, 0.85);
+        this.overlay!.beginPath();
+        this.overlay!.moveTo(hingePos.x, hingePos.y);
+        this.overlay!.arc(hingePos.x, hingePos.y, length, closedAngle - maxAngle, closedAngle + maxAngle, false);
+        this.overlay!.lineTo(hingePos.x, hingePos.y);
+        this.overlay!.closePath();
+        this.overlay!.strokePath();
+        
+        // Draw hinge point
+        this.overlay!.fillStyle(colors.sensor, 0.8);
+        this.overlay!.fillCircle(hingePos.x, hingePos.y, 4);
+      }
     }
-    this.overlay!.lineStyle(1, color, 0.8);
+    
+    this.overlay!.lineStyle(1, kind === "door" ? colors.sensor : kind === "mesh" ? 0xb6f2df : kind === "transparent" ? 0x67d7ff : colors.wall, 0.8);
     this.overlay!.strokeCircle(wall.a.x, wall.a.y, selected ? 8 : 5);
     this.overlay!.strokeCircle(wall.b.x, wall.b.y, selected ? 8 : 5);
     const label = wall.label || kindLabel(kind);

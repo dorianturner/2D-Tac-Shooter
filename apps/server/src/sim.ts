@@ -42,7 +42,6 @@ import {
   DOOR_MAX_ANGULAR_SPEED,
   DOOR_PUSH_SKIN,
   DOOR_PUSH_STRENGTH,
-  DOOR_RETURN_STRENGTH,
   FIRE_COOLDOWN_TICKS,
   FIRE_RANGE,
   GADGET_LOADOUT,
@@ -91,6 +90,13 @@ type PendingAction =
 type ActionRejectReason = NonNullable<ActionResult["reason"]>;
 
 type DeployResult = { accepted: true } | { accepted: false; reason: ActionRejectReason };
+
+interface DesiredMovement {
+  player: PlayerState;
+  slot: PlayerSlot;
+  input: InputState;
+  desired: Vec2;
+}
 
 interface PlayerSlot {
   id: PlayerId;
@@ -293,6 +299,7 @@ export function stepRoom(room: RoomState): void {
     return;
   }
 
+  const desiredMovements: DesiredMovement[] = [];
   for (const player of Object.values(room.players)) {
     if (!player.alive) continue;
     const slot = room.slots[player.id];
@@ -303,15 +310,19 @@ export function stepRoom(room: RoomState): void {
     const delta = { x: input.move.x * speed, y: input.move.y * speed };
     const desired = add(player.position, delta);
     collectDoorPushes(room, player.position, desired, delta);
+    player.aim = input.aim;
+    desiredMovements.push({ player, slot, input, desired });
+  }
+  integrateDoors(room);
+
+  for (const { player, slot, input, desired } of desiredMovements) {
     const next = movePlayerWithSweptCollision(room.map, player.position, desired, PLAYER_RADIUS);
     player.velocity = { x: next.x - player.position.x, y: next.y - player.position.y };
     player.position = next;
-    player.aim = input.aim;
     processPendingActions(room, player, slot);
     if (input.fire && room.tick >= slot.nextActionTick) resolveShot(room, player.id);
     room.analytics.push({ type: "movement-sample", tick: room.tick, data: { playerId: player.id, position: player.position } });
   }
-  integrateDoors(room);
   resolvePlayerDoorOverlaps(room);
 
   resolveSensors(room);
@@ -437,11 +448,7 @@ function moveWithCapsuleCollision(map: MapDefinition, current: Vec2, desired: Ve
 function integrateDoors(room: RoomState): void {
   for (const door of room.map.walls) {
     if (door.kind !== "door" || !door.hinge || !door.closedB || door.destroyed) continue;
-    const restAngle = door.restAngle ?? 0;
-    const recentlyPushed = room.tick - (door.lastPushTick ?? -9999) <= 8;
-    const target = recentlyPushed ? (door.targetAngle ?? door.currentAngle ?? restAngle) : restAngle;
-    const springStrength = recentlyPushed ? DOOR_RETURN_STRENGTH * 0.25 : DOOR_RETURN_STRENGTH;
-    door.angularVelocity = clampDoorSpeed((door.angularVelocity ?? 0) + (target - (door.currentAngle ?? 0)) * springStrength);
+    door.angularVelocity = clampDoorSpeed(door.angularVelocity ?? 0);
     for (let substep = 0; substep < DOOR_COLLISION_SUBSTEPS; substep += 1) {
       const previousAngle = door.currentAngle ?? 0;
       const previousB = door.b;
@@ -452,7 +459,6 @@ function integrateDoors(room: RoomState): void {
         door.angularVelocity = 0;
         door.targetAngle = previousAngle;
         door.blockedUntilTick = room.tick + 4;
-        door.lastPushTick = room.tick - 99;
         door.a = door.hinge;
         door.b = previousB;
         break;

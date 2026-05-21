@@ -144,7 +144,7 @@ describe("authoritative simulation", () => {
     expect(distanceToSegment(room.players.p1.position, door.a, door.b)).toBeGreaterThanOrEqual(10 + door.thickness / 2);
   });
 
-  it("damps doors back toward closed after push input stops", () => {
+  it("damps door velocity without springing back after push input stops", () => {
     const map = testMap();
     map.walls.push(createWall("door-damped", "door", { x: 120, y: 90 }, { x: 120, y: 150 }, 8));
     const room = activeRoom(map);
@@ -152,10 +152,9 @@ describe("authoritative simulation", () => {
     applyClientMessage(room, "p1", { type: "command", seq: 1, tick: room.tick, move: { x: 1, y: 0 }, aim: 0, fire: false, use: "none" });
     for (let i = 0; i < 20; i += 1) stepRoom(room);
     const door = room.map.walls.find((wall) => wall.id === "door-damped")!;
-    const opened = Math.abs(door.currentAngle ?? 0);
     applyClientMessage(room, "p1", { type: "command", seq: 2, tick: room.tick, move: { x: 0, y: 0 }, aim: 0, fire: false, use: "none" });
     for (let i = 0; i < 90; i += 1) stepRoom(room);
-    expect(Math.abs(door.currentAngle ?? 0)).toBeLessThan(opened);
+    expect(Math.abs(door.currentAngle ?? 0)).toBeGreaterThan(0.3);
     expect(Math.abs(door.angularVelocity ?? 0)).toBeLessThan(0.03);
   });
 

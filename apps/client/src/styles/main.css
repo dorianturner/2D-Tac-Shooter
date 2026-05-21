@@ -345,7 +345,15 @@ canvas {
   gap: 8px;
 }
 
+.room-header {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 10px;
+}
+
 .room-refresh {
+  flex: 1;
   height: 4px;
   overflow: hidden;
   border: 1px solid rgba(118, 219, 255, 0.22);

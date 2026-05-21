@@ -1,5 +1,5 @@
 import Phaser from "phaser";
-import { distance, lineIntersection, normalize, type GadgetKind, type PlayerCommand, type PlayerId, type PlayerState, type RoomSummary, type ServerMessage, type ServerSnapshot, type ServerWelcome, type ShotImpact, type Vec2, type Wall } from "@tac/shared";
+import { distance, lineIntersection, normalize, type GadgetKind, type PlayerCommand, type PlayerId, type PlayerState, type RoomSummary, type ServerMessage, type ServerSnapshot, type ServerWelcome, type ShotImpact, type Vec2, type Wall, TICK_RATE } from "@tac/shared";
 import { listMaps, listRooms } from "../editorApi";
 import { mapSummaryToPickable, pickFromList } from "../fuzzyPicker";
 import { colors, drawDeployedCamera, drawFogOfWar, drawMap, drawMolotovZone, drawPlayer, drawSmokeZone, drawSoundSensorZone } from "../render";
@@ -8,7 +8,8 @@ const GADGET_RANGES: Record<GadgetKind, number> = { camera: 180, molotov: 220, s
 const GADGET_RADII: Record<Exclude<GadgetKind, "wall">, number> = { camera: 120, molotov: 55, smoke: 62, sound: 135 };
 const DEPLOYABLE_WALL_LENGTH = 36;
 const DEPLOYABLE_WALL_THICKNESS = 10;
-const ROOM_REFRESH_MS = 5000;
+const ROOM_REFRESH_MS = 2000;
+const SERVER_TICK_MS = 1000 / 60;
 
 interface GadgetPreviewTarget {
   position: Vec2;
@@ -31,6 +32,8 @@ export class PlayScene extends Phaser.Scene {
   private hud: HTMLElement | undefined = undefined;
   private keys: Record<string, Phaser.Input.Keyboard.Key> | undefined = undefined;
   private renderedPlayers = new Map<PlayerId, { position: Vec2; aim: number }>();
+  private renderedWalls = new Map<string, Wall>();
+  private lastSnapshotAtMs = 0;
   private currentAim = 0;
   private rematchRequested = false;
   private selectedGadget: GadgetKind | "none" = "none";
@@ -93,6 +96,7 @@ export class PlayScene extends Phaser.Scene {
       this.pendingDeploy = { gadget: deploy.gadget, seq };
       this.queuedDeploy = undefined;
     }
+    this.renderMap(this.snapshot);
     this.renderSnapshot(this.snapshot);
     const renderedSelf = this.renderedPlayers.get(this.snapshot.playerId);
     if (renderedSelf) this.cameras.main.centerOn(renderedSelf.position.x, renderedSelf.position.y);
@@ -111,7 +115,10 @@ export class PlayScene extends Phaser.Scene {
           <button class="primary-action" data-action="create">Create Game</button>
           <button class="secondary-action" data-action="join">Join Game</button>
         </div>
-        <div class="room-refresh" aria-hidden="true"><i></i></div>
+        <div class="room-header">
+          <div class="room-refresh" aria-hidden="true"><i></i></div>
+          <button class="secondary-action" data-action="refresh" style="white-space: nowrap;">Refresh</button>
+        </div>
         <div class="room-list"></div>
         <div class="play-hud"></div>
         <div class="match-actions" hidden>
@@ -125,6 +132,7 @@ export class PlayScene extends Phaser.Scene {
     this.refreshBar = this.shell.querySelector<HTMLElement>(".room-refresh i") ?? undefined;
     this.shell.querySelector("[data-action='create']")?.addEventListener("click", () => void this.createGame());
     this.shell.querySelector("[data-action='join']")?.addEventListener("click", () => void this.joinGame());
+    this.shell.querySelector("[data-action='refresh']")?.addEventListener("click", () => void this.refreshRooms());
     this.shell.querySelector("[data-action='rematch']")?.addEventListener("click", () => {
       this.rematchRequested = true;
       this.send({ type: "rematch" });
@@ -203,7 +211,10 @@ export class PlayScene extends Phaser.Scene {
   private onMessage(message: ServerMessage): void {
     if (message.type === "welcome") {
       this.welcome = message;
+      this.renderedWalls.clear();
       this.shell?.classList.add("in-game");
+      const roomHeader = this.shell?.querySelector<HTMLElement>(".room-header");
+      if (roomHeader) roomHeader.style.display = "none";
       drawMap(this.mapLayer!, message.map);
       this.setHud(`Room ${message.roomId} | ${message.playerId.toUpperCase()} | ${message.map.name} | waiting for player`);
     } else if (message.type === "snapshot") {
@@ -217,8 +228,8 @@ export class PlayScene extends Phaser.Scene {
         }
       }
       this.snapshot = message;
-      this.mapLayer?.clear();
-      drawMap(this.mapLayer!, { ...this.welcome!.map, walls: message.map.walls });
+      this.lastSnapshotAtMs = performance.now();
+      this.renderMap(message);
       this.renderSnapshot(message);
     } else if (message.type === "error") {
       this.setHud(message.message);
@@ -250,6 +261,49 @@ export class PlayScene extends Phaser.Scene {
       drawPlayer(this.entityLayer, rendered.position, player.team === "blue" ? colors.blue : colors.orange, player.id === snapshot.playerId, rendered.aim);
     }
     this.updateMatchHud(snapshot);
+  }
+
+  private renderMap(snapshot: ServerSnapshot): void {
+    if (!this.mapLayer || !this.welcome) return;
+    const walls = this.smoothedWalls(snapshot.map.walls);
+    drawMap(this.mapLayer, { ...this.welcome.map, walls });
+  }
+
+  private smoothedWalls(walls: Wall[]): Wall[] {
+    const liveIds = new Set(walls.map((wall) => wall.id));
+    for (const id of this.renderedWalls.keys()) {
+      if (!liveIds.has(id)) this.renderedWalls.delete(id);
+    }
+    return walls.map((wall) => {
+      const kind = wall.kind ?? (wall.blocksVision ? "solid" : "transparent");
+      if (kind !== "door" || wall.destroyed) {
+        this.renderedWalls.set(wall.id, structuredClone(wall));
+        return wall;
+      }
+      const predicted = this.predictedDoor(wall);
+      const existing = this.renderedWalls.get(wall.id);
+      if (!existing || existing.destroyed) {
+        const created = structuredClone(predicted);
+        this.renderedWalls.set(wall.id, created);
+        return created;
+      }
+      const blend = 0.45;
+      const smoothed: Wall = {
+        ...predicted,
+        a: { x: Phaser.Math.Linear(existing.a.x, predicted.a.x, blend), y: Phaser.Math.Linear(existing.a.y, predicted.a.y, blend) },
+        b: { x: Phaser.Math.Linear(existing.b.x, predicted.b.x, blend), y: Phaser.Math.Linear(existing.b.y, predicted.b.y, blend) }
+      };
+      if (predicted.currentAngle !== undefined) smoothed.currentAngle = Phaser.Math.Linear(existing.currentAngle ?? predicted.currentAngle, predicted.currentAngle, blend);
+      this.renderedWalls.set(wall.id, structuredClone(smoothed));
+      return smoothed;
+    });
+  }
+
+  private predictedDoor(wall: Wall): Wall {
+    if (!wall.hinge || !wall.closedB || wall.currentAngle === undefined || wall.angularVelocity === undefined) return wall;
+    const elapsedTicks = Phaser.Math.Clamp((performance.now() - this.lastSnapshotAtMs) / SERVER_TICK_MS, 0, 2.5);
+    const angle = Phaser.Math.Clamp(wall.currentAngle + wall.angularVelocity * elapsedTicks, -1.92, 1.92);
+    return { ...wall, currentAngle: angle, a: { ...wall.hinge }, b: rotateDoorEndpoint(wall.hinge, wall.closedB, angle) };
   }
 
   private smoothedPlayer(player: PlayerState): { position: Vec2; aim: number } {
@@ -386,10 +440,17 @@ export class PlayScene extends Phaser.Scene {
   private updateMatchHud(snapshot: ServerSnapshot): void {
     if (!this.welcome) return;
     const round = snapshot.round;
-    const countdown = Math.max(0, Math.ceil(((round.phase === "countdown" ? round.startsAtTick : round.endsAtTick) - snapshot.tick) / 30));
+    const countdown = Math.max(0, Math.ceil(((round.phase === "countdown" ? round.startsAtTick : round.endsAtTick) - snapshot.tick) / TICK_RATE));
     const time = round.phase === "lobby" ? "waiting for player" : round.phase === "active" ? formatTime(countdown) : round.phase === "countdown" ? `starts in ${countdown}` : "ended";
     const roundResult = round.winner ? ` | round ${round.winner === "draw" ? "draw" : `${round.winner.toUpperCase()} won`}` : "";
     const score = `${round.scores.p1}-${round.scores.p2}`;
+    const doorDebug = snapshot.debug
+      ? snapshot.map.walls
+        .filter((wall) => wall.kind === "door")
+        .slice(0, 3)
+        .map((door) => `${door.id}: a=${(door.currentAngle ?? 0).toFixed(2)} v=${(door.angularVelocity ?? 0).toFixed(3)} c=${door.pushContactTicks ?? 0} b=${door.blockedUntilTick ?? 0}`)
+        .join(" | ")
+      : "";
     if (round.matchWinner) {
       const result = round.matchWinner === snapshot.playerId ? "Victory" : "Defeat";
       this.setHud(`${result} | Final ${score} | ${this.welcome.map.name}${this.rematchRequested ? " | rematch requested" : ""}`);
@@ -416,6 +477,7 @@ export class PlayScene extends Phaser.Scene {
         <button class="${this.selectedGadget === "sound" ? "selected" : ""}" data-gadget="sound">SND ${snapshot.self.gadgets.sound}</button>
       </div>
       <div class="hud-meta">${this.welcome.roomId} | ${snapshot.playerId.toUpperCase()} | ${this.welcome.map.name}${roundResult}</div>
+      ${doorDebug ? `<div class="hud-meta">${doorDebug}</div>` : ""}
     `);
     this.hud?.querySelectorAll<HTMLButtonElement>("[data-gadget]").forEach((button) => {
       button.addEventListener("click", () => this.toggleGadget(button.dataset.gadget as GadgetKind));
@@ -443,6 +505,12 @@ export class PlayScene extends Phaser.Scene {
 
 function roomToPickable(room: RoomSummary) {
   return { id: room.id, name: `${room.id} | ${room.mapName}`, detail: `${room.playerCount}/2 ${room.phase}` };
+}
+
+function rotateDoorEndpoint(hinge: Vec2, closedB: Vec2, angle: number): Vec2 {
+  const length = distance(hinge, closedB);
+  const base = Math.atan2(closedB.y - hinge.y, closedB.x - hinge.x);
+  return { x: hinge.x + Math.cos(base + angle) * length, y: hinge.y + Math.sin(base + angle) * length };
 }
 
 function formatTime(seconds: number): string {
