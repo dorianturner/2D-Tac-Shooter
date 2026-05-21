@@ -6,7 +6,6 @@ import {
   hasLineOfSight,
   lineIntersection,
   mul,
-  moveWithWallCollision,
   normalize,
   pointInCone,
   sampleMap,
@@ -34,9 +33,14 @@ import {
   CAMERA_HIT_RADIUS,
   CAMERA_RANGE,
   CAMERA_RADIUS,
+  DOOR_COLLISION_SUBSTEPS,
   DEPLOYABLE_WALL_RANGE,
   DOOR_DAMPING,
   DOOR_MAX_ANGLE,
+  DOOR_MAX_ANGULAR_SPEED,
+  DOOR_PLAYER_SKIN,
+  DOOR_PUSH_STRENGTH,
+  DOOR_RETURN_STRENGTH,
   FIRE_COOLDOWN_TICKS,
   FIRE_RANGE,
   GADGET_LOADOUT,
@@ -293,10 +297,10 @@ export function stepRoom(room: RoomState): void {
     const input = slot.inputState;
     completeReload(player, room.tick);
     player.walking = Boolean(input.walk);
-const speed = player.walking ? PLAYER_WALK_SPEED : PLAYER_SPEED;
+    const speed = player.walking ? PLAYER_WALK_SPEED : PLAYER_SPEED;
     const delta = { x: input.move.x * speed, y: input.move.y * speed };
     const desired = add(player.position, delta);
-    collectDoorPushes(room.map, player.position, desired, delta);
+    collectDoorPushes(room, player.position, desired, delta);
     const next = movePlayerWithSweptCollision(room.map, player.position, desired, PLAYER_RADIUS);
     player.velocity = { x: next.x - player.position.x, y: next.y - player.position.y };
     player.position = next;
@@ -327,8 +331,12 @@ export function initializeRuntimeMap(map: MapDefinition): MapDefinition {
         hinge,
         closedA: withHp.closedA ?? withHp.a,
         closedB,
+        restAngle: withHp.restAngle ?? 0,
+        targetAngle: withHp.targetAngle ?? 0,
         currentAngle: withHp.currentAngle ?? 0,
         angularVelocity: withHp.angularVelocity ?? 0,
+        lastPushTick: withHp.lastPushTick ?? 0,
+        blockedUntilTick: withHp.blockedUntilTick ?? 0,
         blocksMovement: true,
         blocksVision: true,
         a: hinge,
@@ -347,58 +355,92 @@ function initializeWallHp(wall: MapDefinition["walls"][number]): MapDefinition["
   return { ...wall, maxHp, hp: wall.hp ?? maxHp };
 }
 
-function collectDoorPushes(map: MapDefinition, current: Vec2, desired: Vec2, delta: Vec2): void {
+function collectDoorPushes(room: RoomState, current: Vec2, desired: Vec2, delta: Vec2): void {
   if (Math.hypot(delta.x, delta.y) < 0.01) return;
-  for (const door of map.walls) {
+  for (const door of room.map.walls) {
     if (door.kind !== "door" || !door.hinge || door.destroyed) continue;
-    const contactDistance = PLAYER_RADIUS + Math.max(10, door.thickness) + 3;
-    const contact = distanceToSegment(current, door.a, door.b) <= contactDistance
-      || distanceToSegment(desired, door.a, door.b) <= contactDistance
+    const threshold = PLAYER_RADIUS + door.thickness / 2 + DOOR_PLAYER_SKIN;
+    const currentDistance = distanceToSegment(current, door.a, door.b);
+    const desiredDistance = distanceToSegment(desired, door.a, door.b);
+    const contactForgiveness = 7;
+    const contact = currentDistance <= threshold + contactForgiveness
+      || desiredDistance <= threshold + contactForgiveness
       || Boolean(lineIntersection(current, desired, door.a, door.b));
     if (!contact) continue;
-    const radius = { x: desired.x - door.hinge.x, y: desired.y - door.hinge.y };
-    const torque = radius.x * delta.y - radius.y * delta.x;
-    door.angularVelocity = (door.angularVelocity ?? 0) + Math.max(-0.045, Math.min(0.045, torque * 0.0011));
+    const panel = { x: door.b.x - door.hinge.x, y: door.b.y - door.hinge.y };
+    const fromHinge = { x: current.x - door.hinge.x, y: current.y - door.hinge.y };
+    const side = cross(panel, fromHinge);
+    const fallback = cross(panel, delta);
+    const sideSign = Math.sign(side || fallback || 1);
+    const closingAgainstPush = Math.sign(door.currentAngle ?? 0) === sideSign;
+    const closeness = Math.max(0.45, 1 - Math.min(currentDistance, desiredDistance) / Math.max(1, threshold + contactForgiveness));
+    const impulse = -sideSign * DOOR_PUSH_STRENGTH * closeness * (closingAgainstPush ? 1.45 : 1);
+    door.angularVelocity = clampDoorSpeed((door.angularVelocity ?? 0) + impulse);
+    door.targetAngle = Math.max(-DOOR_MAX_ANGLE, Math.min(DOOR_MAX_ANGLE, (door.currentAngle ?? 0) + impulse * 7));
+    door.lastPushTick = room.tick;
   }
 }
 
 function movePlayerWithSweptCollision(map: MapDefinition, current: Vec2, desired: Vec2, radius: number): Vec2 {
   const totalDistance = distance(current, desired);
-  const steps = Math.max(1, Math.ceil(totalDistance / Math.max(1, radius * 0.45)));
+  const steps = Math.max(1, Math.ceil(totalDistance / Math.max(1, radius * 0.3)));
   let position = current;
   for (let step = 1; step <= steps; step += 1) {
     const target = {
       x: current.x + ((desired.x - current.x) * step) / steps,
       y: current.y + ((desired.y - current.y) * step) / steps
     };
-    const next = moveWithWallCollision(map, position, target, radius);
+    const next = moveWithCapsuleCollision(map, position, target, radius);
     if (next === position) return position;
     position = next;
   }
   return position;
 }
 
+function moveWithCapsuleCollision(map: MapDefinition, current: Vec2, desired: Vec2, radius: number): Vec2 {
+  const clamped = {
+    x: Math.max(radius, Math.min(map.bounds.width - radius, desired.x)),
+    y: Math.max(radius, Math.min(map.bounds.height - radius, desired.y))
+  };
+  for (const wall of map.walls) {
+    if (!wall.blocksMovement || wall.destroyed) continue;
+    const threshold = radius + wall.thickness / 2 + (wall.kind === "door" ? DOOR_PLAYER_SKIN : 0);
+    if (distanceToSegment(clamped, wall.a, wall.b) >= threshold && !lineIntersection(current, clamped, wall.a, wall.b)) continue;
+    const slideX = { x: clamped.x, y: current.y };
+    const slideY = { x: current.x, y: clamped.y };
+    if (distanceToSegment(slideX, wall.a, wall.b) >= threshold && !lineIntersection(current, slideX, wall.a, wall.b)) return slideX;
+    if (distanceToSegment(slideY, wall.a, wall.b) >= threshold && !lineIntersection(current, slideY, wall.a, wall.b)) return slideY;
+    return current;
+  }
+  return clamped;
+}
+
 function integrateDoors(room: RoomState): void {
   for (const door of room.map.walls) {
     if (door.kind !== "door" || !door.hinge || !door.closedB || door.destroyed) continue;
-    const angularVelocity = door.angularVelocity ?? 0;
-    if (Math.abs(angularVelocity) >= 0.0005) {
-      for (let substep = 0; substep < 3; substep += 1) {
-        const previousAngle = door.currentAngle ?? 0;
-        const previousB = door.b;
-        const angle = Math.max(-DOOR_MAX_ANGLE, Math.min(DOOR_MAX_ANGLE, previousAngle + angularVelocity / 3));
-        const nextB = rotateDoorEndpoint(door.hinge, door.closedB, angle);
-        if (doorWouldPushIntoPlayer(room, door, nextB) || doorWouldHitWall(room, door, nextB)) {
-          door.currentAngle = previousAngle;
-          door.angularVelocity = 0;
-          door.a = door.hinge;
-          door.b = previousB;
-          break;
-        }
-        door.currentAngle = angle;
+    const restAngle = door.restAngle ?? 0;
+    const recentlyPushed = room.tick - (door.lastPushTick ?? -9999) <= 8;
+    const target = recentlyPushed ? (door.targetAngle ?? door.currentAngle ?? restAngle) : restAngle;
+    const springStrength = recentlyPushed ? DOOR_RETURN_STRENGTH * 0.25 : DOOR_RETURN_STRENGTH;
+    door.angularVelocity = clampDoorSpeed((door.angularVelocity ?? 0) + (target - (door.currentAngle ?? 0)) * springStrength);
+    for (let substep = 0; substep < DOOR_COLLISION_SUBSTEPS; substep += 1) {
+      const previousAngle = door.currentAngle ?? 0;
+      const previousB = door.b;
+      const angle = Math.max(-DOOR_MAX_ANGLE, Math.min(DOOR_MAX_ANGLE, previousAngle + (door.angularVelocity ?? 0) / DOOR_COLLISION_SUBSTEPS));
+      const nextB = rotateDoorEndpoint(door.hinge, door.closedB, angle);
+      if (doorWouldPushIntoPlayer(room, door, nextB) || doorWouldHitWall(room, door, nextB)) {
+        door.currentAngle = previousAngle;
+        door.angularVelocity = 0;
+        door.targetAngle = previousAngle;
+        door.blockedUntilTick = room.tick + 4;
+        door.lastPushTick = room.tick - 99;
         door.a = door.hinge;
-        door.b = nextB;
+        door.b = previousB;
+        break;
       }
+      door.currentAngle = angle;
+      door.a = door.hinge;
+      door.b = nextB;
     }
     door.angularVelocity = (door.angularVelocity ?? 0) * DOOR_DAMPING;
     if (Math.abs(door.angularVelocity) < 0.0005) door.angularVelocity = 0;
@@ -424,6 +466,14 @@ function wallSharesDoorFramePoint(door: MapDefinition["walls"][number], wall: Ma
 function segmentsOverlapWithThickness(a: Vec2, b: Vec2, c: Vec2, d: Vec2, threshold: number): boolean {
   if (lineIntersection(a, b, c, d)) return true;
   return distanceToSegment(a, c, d) < threshold || distanceToSegment(b, c, d) < threshold || distanceToSegment(c, a, b) < threshold || distanceToSegment(d, a, b) < threshold;
+}
+
+function cross(a: Vec2, b: Vec2): number {
+  return a.x * b.y - a.y * b.x;
+}
+
+function clampDoorSpeed(value: number): number {
+  return Math.max(-DOOR_MAX_ANGULAR_SPEED, Math.min(DOOR_MAX_ANGULAR_SPEED, value));
 }
 
 function doorWouldPushIntoPlayer(room: RoomState, door: MapDefinition["walls"][number], nextB: Vec2): boolean {

@@ -20,8 +20,12 @@ export interface Wall {
   closedA?: Vec2;
   closedB?: Vec2;
   openAngle?: number;
+  restAngle?: number;
+  targetAngle?: number;
   currentAngle?: number;
   angularVelocity?: number;
+  lastPushTick?: number;
+  blockedUntilTick?: number;
   a: Vec2;
   b: Vec2;
   thickness: number;

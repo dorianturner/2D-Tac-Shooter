@@ -68,6 +68,55 @@ describe("authoritative simulation", () => {
     expect(Math.abs(door?.currentAngle ?? 0)).toBeGreaterThan(0);
   });
 
+  it("opens hinged doors from walking-speed contact", () => {
+    const map = testMap();
+    map.walls.push(createWall("walk-door", "door", { x: 120, y: 90 }, { x: 120, y: 150 }, 8));
+    const room = activeRoom(map);
+    room.players.p1.position = { x: 100, y: 120 };
+    applyClientMessage(room, "p1", { type: "command", seq: 1, tick: room.tick, move: { x: 1, y: 0 }, aim: 0, fire: false, walk: true, use: "none" });
+    for (let i = 0; i < 12; i += 1) stepRoom(room);
+    const door = room.map.walls.find((wall) => wall.id === "walk-door")!;
+    expect(Math.abs(door.currentAngle ?? 0)).toBeGreaterThan(0.03);
+    expect(Math.abs(door.angularVelocity ?? 0)).toBeLessThanOrEqual(0.06);
+  });
+
+  it("opens doors smoothly in both directions based on push side", () => {
+    const leftMap = testMap();
+    leftMap.walls.push(createWall("door-left", "door", { x: 120, y: 90 }, { x: 120, y: 150 }, 8));
+    const leftRoom = activeRoom(leftMap);
+    leftRoom.players.p1.position = { x: 100, y: 120 };
+    applyClientMessage(leftRoom, "p1", { type: "command", seq: 1, tick: leftRoom.tick, move: { x: 1, y: 0 }, aim: 0, fire: false, use: "none" });
+    for (let i = 0; i < 16; i += 1) stepRoom(leftRoom);
+    const leftDoor = leftRoom.map.walls.find((wall) => wall.id === "door-left")!;
+    expect(leftDoor.currentAngle ?? 0).toBeLessThan(-0.05);
+    expect(Math.abs(leftDoor.angularVelocity ?? 0)).toBeLessThanOrEqual(0.06);
+
+    const rightMap = testMap();
+    rightMap.walls.push(createWall("door-right", "door", { x: 120, y: 90 }, { x: 120, y: 150 }, 8));
+    const rightRoom = activeRoom(rightMap);
+    rightRoom.players.p1.position = { x: 140, y: 120 };
+    applyClientMessage(rightRoom, "p1", { type: "command", seq: 1, tick: rightRoom.tick, move: { x: -1, y: 0 }, aim: Math.PI, fire: false, use: "none" });
+    for (let i = 0; i < 16; i += 1) stepRoom(rightRoom);
+    const rightDoor = rightRoom.map.walls.find((wall) => wall.id === "door-right")!;
+    expect(rightDoor.currentAngle ?? 0).toBeGreaterThan(0.05);
+    expect(Math.abs(rightDoor.angularVelocity ?? 0)).toBeLessThanOrEqual(0.06);
+  });
+
+  it("damps doors back toward closed after push input stops", () => {
+    const map = testMap();
+    map.walls.push(createWall("door-damped", "door", { x: 120, y: 90 }, { x: 120, y: 150 }, 8));
+    const room = activeRoom(map);
+    room.players.p1.position = { x: 100, y: 120 };
+    applyClientMessage(room, "p1", { type: "command", seq: 1, tick: room.tick, move: { x: 1, y: 0 }, aim: 0, fire: false, use: "none" });
+    for (let i = 0; i < 20; i += 1) stepRoom(room);
+    const door = room.map.walls.find((wall) => wall.id === "door-damped")!;
+    const opened = Math.abs(door.currentAngle ?? 0);
+    applyClientMessage(room, "p1", { type: "command", seq: 2, tick: room.tick, move: { x: 0, y: 0 }, aim: 0, fire: false, use: "none" });
+    for (let i = 0; i < 90; i += 1) stepRoom(room);
+    expect(Math.abs(door.currentAngle ?? 0)).toBeLessThan(opened);
+    expect(Math.abs(door.angularVelocity ?? 0)).toBeLessThan(0.03);
+  });
+
   it("normalizes runtime doors to block vision", () => {
     const map = testMap();
     map.walls.push(createWall("door-los", "door", { x: 120, y: 90 }, { x: 120, y: 150 }, 8));

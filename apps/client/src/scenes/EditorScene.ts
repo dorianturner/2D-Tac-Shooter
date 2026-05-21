@@ -25,6 +25,7 @@ import { colors } from "../render";
 type Tool = "select" | "wall" | "transparent" | "mesh" | "door" | "room" | "p1-spawn" | "p2-spawn";
 type DragMode =
   | { type: "none" }
+  | { type: "pan"; previous: Vec2 }
   | { type: "create"; start: Vec2 }
   | { type: "select-box"; start: Vec2; current: Vec2 }
   | { type: "move"; previous: Vec2 }
@@ -62,6 +63,10 @@ export class EditorScene extends Phaser.Scene {
   private toolbar: HTMLElement | undefined = undefined;
   private properties: HTMLElement | undefined = undefined;
   private status: HTMLElement | undefined = undefined;
+  private preventMiddleMouse = (event: MouseEvent): void => {
+    if (event.button !== 1) return;
+    event.preventDefault();
+  };
 
   constructor() {
     super("editor");
@@ -77,6 +82,9 @@ export class EditorScene extends Phaser.Scene {
     this.input.on("pointerdown", (pointer: Phaser.Input.Pointer) => this.onPointerDown(pointer));
     this.input.on("pointermove", (pointer: Phaser.Input.Pointer) => this.onPointerMove(pointer));
     this.input.on("pointerup", (pointer: Phaser.Input.Pointer) => this.onPointerUp(pointer));
+    this.input.on("pointerupoutside", (pointer: Phaser.Input.Pointer) => this.onPointerUp(pointer));
+    this.game.canvas.addEventListener("mousedown", this.preventMiddleMouse);
+    this.game.canvas.addEventListener("auxclick", this.preventMiddleMouse);
     this.input.keyboard?.on("keydown-DELETE", () => this.deleteSelected());
     this.input.keyboard?.on("keydown-BACKSPACE", () => this.deleteSelected());
     this.input.keyboard?.on("keydown-Z", (event: KeyboardEvent) => {
@@ -89,7 +97,11 @@ export class EditorScene extends Phaser.Scene {
       if (event.ctrlKey || event.metaKey) this.pasteClipboard();
     });
     this.redraw();
-    this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => this.root?.remove());
+    this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
+      this.game.canvas.removeEventListener("mousedown", this.preventMiddleMouse);
+      this.game.canvas.removeEventListener("auxclick", this.preventMiddleMouse);
+      this.root?.remove();
+    });
   }
 
   private createChrome(): void {
@@ -104,7 +116,7 @@ export class EditorScene extends Phaser.Scene {
           <button data-action="load">Load</button>
         </div>
         <div class="tool-grid"></div>
-        <p class="editor-hint">Wheel zooms. Shift-click adds to selection. Drag empty space to box-select. Delete removes selected geometry.</p>
+        <p class="editor-hint">Wheel zooms. Middle-drag pans. Shift-click adds to selection. Drag empty space to box-select. Delete removes selected geometry.</p>
       </aside>
       <aside class="editor-right">
         <h2>Map Settings</h2>
@@ -133,6 +145,11 @@ export class EditorScene extends Phaser.Scene {
   }
 
   private onPointerDown(pointer: Phaser.Input.Pointer): void {
+    if (isMiddleMouse(pointer.event)) {
+      pointer.event.preventDefault();
+      this.drag = { type: "pan", previous: { x: pointer.x, y: pointer.y } };
+      return;
+    }
     const point = this.worldPoint(pointer);
     this.pointerWorld = point;
     if (this.tool === "door") {
@@ -187,6 +204,15 @@ export class EditorScene extends Phaser.Scene {
   }
 
   private onPointerMove(pointer: Phaser.Input.Pointer): void {
+    if (this.drag.type === "pan") {
+      const camera = this.cameras.main;
+      const dx = pointer.x - this.drag.previous.x;
+      const dy = pointer.y - this.drag.previous.y;
+      camera.scrollX -= dx / camera.zoom;
+      camera.scrollY -= dy / camera.zoom;
+      this.drag.previous = { x: pointer.x, y: pointer.y };
+      return;
+    }
     const point = this.worldPoint(pointer);
     this.pointerWorld = point;
     if (this.drag.type === "move") {
@@ -205,6 +231,11 @@ export class EditorScene extends Phaser.Scene {
   }
 
   private onPointerUp(pointer: Phaser.Input.Pointer): void {
+    if (this.drag.type === "pan") {
+      pointer.event.preventDefault();
+      this.drag = { type: "none" };
+      return;
+    }
     const point = this.worldPoint(pointer);
     if (this.drag.type === "create") {
       this.recordUndo();
@@ -642,6 +673,10 @@ function normalizeMap(map: MapDefinition): MapDefinition {
       return { ...wall, ...defaults, kind, destructible: wall.destructible };
     })
   };
+}
+
+function isMiddleMouse(event: MouseEvent | TouchEvent | WheelEvent): event is MouseEvent {
+  return "button" in event && event.button === 1;
 }
 
 function createBlankMap(): MapDefinition {
