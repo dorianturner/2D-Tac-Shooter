@@ -81,6 +81,17 @@ canvas {
   margin: 26px 0;
 }
 
+.match-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.match-actions[hidden] {
+  display: none;
+}
+
 .primary-action,
 .secondary-action,
 .back-link,

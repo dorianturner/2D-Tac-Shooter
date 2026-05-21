@@ -27,6 +27,8 @@ export interface Wall {
   blocksVision: boolean;
   blocksMovement: boolean;
   destructible: boolean;
+  hp?: number;
+  maxHp?: number;
   destroyed?: boolean;
 }
 
@@ -129,6 +131,7 @@ export interface ServerSnapshot {
     walls: Wall[];
     sensors: SensorDefinition[];
   };
+  shotImpacts: ShotImpact[];
   visiblePolygon: Vec2[];
   explored: Vec2[];
   debug?: DebugTruth;
@@ -142,15 +145,30 @@ export interface DebugTruth {
 
 export interface RoundState {
   phase: RoundPhase;
+  roundNumber: number;
+  scores: Record<PlayerId, number>;
   startsAtTick: number;
   endsAtTick: number;
+  nextRoundStartsAtTick?: number;
   winner?: PlayerId | "draw";
+  matchWinner?: PlayerId;
   reason?: "kill" | "timer";
+}
+
+export interface ShotImpact {
+  id: string;
+  tick: number;
+  shooter: PlayerId;
+  origin: Vec2;
+  end: Vec2;
+  hit: "none" | "player" | "wall";
+  targetId?: PlayerId;
+  wallId?: string;
 }
 
 export type AuthoritativeEvent =
   | { type: "round-start"; tick: number }
-  | { type: "shot"; tick: number; shooter: PlayerId; origin: Vec2; aim: number }
+  | { type: "shot"; tick: number; impact: ShotImpact }
   | { type: "hit"; tick: number; shooter: PlayerId; target: PlayerId }
   | { type: "kill"; tick: number; shooter: PlayerId; target: PlayerId }
   | { type: "sensor-detect"; tick: number; sensorId: string; target: PlayerId; confidence: number }
@@ -175,6 +193,10 @@ export interface ClientHello {
   debug?: boolean;
 }
 
+export interface RematchRequest {
+  type: "rematch";
+}
+
 export interface ServerWelcome {
   type: "welcome";
   playerId: PlayerId;
@@ -191,5 +213,5 @@ export interface RoomSummary {
   phase: RoundPhase;
 }
 
-export type ClientMessage = ClientHello | PlayerCommand;
+export type ClientMessage = ClientHello | PlayerCommand | RematchRequest;
 export type ServerMessage = ServerWelcome | ServerSnapshot | { type: "rooms"; rooms: RoomSummary[] } | { type: "error"; message: string };

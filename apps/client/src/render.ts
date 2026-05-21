@@ -84,9 +84,9 @@ export function drawSnapshot(g: Phaser.GameObjects.Graphics, snapshot: ServerSna
 
 export function drawPlayer(g: Phaser.GameObjects.Graphics, position: Vec2, color: number, self: boolean, aim: number): void {
   g.fillStyle(color, self ? 1 : 0.86);
-  g.fillCircle(position.x, position.y, self ? 15 : 13);
+  g.fillCircle(position.x, position.y, self ? 10 : 9);
   g.lineStyle(3, color, 0.9);
-  g.lineBetween(position.x, position.y, position.x + Math.cos(aim) * 30, position.y + Math.sin(aim) * 30);
+  g.lineBetween(position.x, position.y, position.x + Math.cos(aim) * 24, position.y + Math.sin(aim) * 24);
 }
 
 function drawDetection(g: Phaser.GameObjects.Graphics, detection: Detection): void {

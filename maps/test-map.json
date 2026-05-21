@@ -1,6 +1,6 @@
 {
   "id": "test-map",
-  "version": 5,
+  "version": 6,
   "name": "Test Map",
   "bounds": {
     "width": 1000,
@@ -171,7 +171,7 @@
       "kind": "solid",
       "label": "wall",
       "a": {
-        "x": 320,
+        "x": 400,
         "y": 520
       },
       "b": {
@@ -839,7 +839,7 @@
       "thickness": 12,
       "blocksVision": false,
       "blocksMovement": true,
-      "destructible": false
+      "destructible": true
     },
     {
       "id": "mesh-48",
@@ -857,6 +857,112 @@
       "blocksVision": false,
       "blocksMovement": true,
       "destructible": false
+    },
+    {
+      "id": "room-49-north",
+      "kind": "solid",
+      "label": "room-49",
+      "roomId": "room-49",
+      "a": {
+        "x": 80,
+        "y": 80
+      },
+      "b": {
+        "x": 120,
+        "y": 80
+      },
+      "thickness": 12,
+      "blocksVision": true,
+      "blocksMovement": true,
+      "destructible": false
+    },
+    {
+      "id": "room-49-east",
+      "kind": "solid",
+      "label": "room-49",
+      "roomId": "room-49",
+      "a": {
+        "x": 120,
+        "y": 80
+      },
+      "b": {
+        "x": 120,
+        "y": 160
+      },
+      "thickness": 12,
+      "blocksVision": true,
+      "blocksMovement": true,
+      "destructible": false
+    },
+    {
+      "id": "room-49-south",
+      "kind": "solid",
+      "label": "room-49",
+      "roomId": "room-49",
+      "a": {
+        "x": 120,
+        "y": 160
+      },
+      "b": {
+        "x": 80,
+        "y": 160
+      },
+      "thickness": 12,
+      "blocksVision": true,
+      "blocksMovement": true,
+      "destructible": false
+    },
+    {
+      "id": "room-49-west",
+      "kind": "solid",
+      "label": "room-49",
+      "roomId": "room-49",
+      "a": {
+        "x": 80,
+        "y": 160
+      },
+      "b": {
+        "x": 80,
+        "y": 80
+      },
+      "thickness": 12,
+      "blocksVision": true,
+      "blocksMovement": true,
+      "destructible": false
+    },
+    {
+      "id": "solid-53",
+      "kind": "solid",
+      "label": "wall",
+      "a": {
+        "x": 320,
+        "y": 520
+      },
+      "b": {
+        "x": 360,
+        "y": 520
+      },
+      "thickness": 12,
+      "blocksVision": true,
+      "blocksMovement": true,
+      "destructible": false
+    },
+    {
+      "id": "solid-54",
+      "kind": "solid",
+      "label": "wall",
+      "a": {
+        "x": 400,
+        "y": 520
+      },
+      "b": {
+        "x": 360,
+        "y": 520
+      },
+      "thickness": 12,
+      "blocksVision": true,
+      "blocksMovement": true,
+      "destructible": true
     }
   ],
   "spawns": [

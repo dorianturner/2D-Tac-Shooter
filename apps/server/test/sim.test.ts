@@ -57,7 +57,89 @@ describe("authoritative simulation", () => {
     expect(door?.hinge).toEqual({ x: 120, y: 90 });
     expect(Math.abs(door?.currentAngle ?? 0)).toBeGreaterThan(0);
   });
+
+  it("enforces assault rifle cadence and kills a player in five hits", () => {
+    const room = activeRoom(testMap());
+    applyClientMessage(room, "p1", { type: "command", seq: 1, tick: room.tick, move: { x: 0, y: 0 }, aim: 0, fire: true, use: "none" });
+    stepRoom(room);
+    expect(room.players.p2.hp).toBe(4);
+    stepRoom(room);
+    stepRoom(room);
+    expect(room.players.p2.hp).toBe(4);
+    for (let i = 0; i < 15; i += 1) stepRoom(room);
+    expect(room.round.winner).toBe("p1");
+    expect(room.round.scores.p1).toBe(1);
+    expect(room.replay.events.some((event) => event.type === "kill" && event.target === "p2")).toBe(true);
+  });
+
+  it("ends the match when a player wins two rounds", () => {
+    const room = activeRoom(testMap());
+    shootUntilRoundEnds(room);
+    expect(room.round.phase).toBe("countdown");
+    for (let i = 0; i < 46; i += 1) stepRoom(room);
+    shootUntilRoundEnds(room);
+    expect(room.round.phase).toBe("ended");
+    expect(room.round.matchWinner).toBe("p1");
+  });
+
+  it("expires the timer as a draw without awarding a point", () => {
+    const room = activeRoom(testMap());
+    room.tick = room.round.endsAtTick - 1;
+    stepRoom(room);
+    expect(room.round.winner).toBe("draw");
+    expect(room.round.scores).toEqual({ p1: 0, p2: 0 });
+  });
+
+  it("destroys transparent and mesh surfaces in one shot", () => {
+    const map = testMap();
+    map.walls.push(createWall("glass", "transparent", { x: 100, y: 80 }, { x: 100, y: 160 }, 8, { destructible: true }));
+    map.walls.push(createWall("mesh", "mesh", { x: 160, y: 80 }, { x: 160, y: 160 }, 8, { destructible: true }));
+    const room = activeRoom(map);
+    applyClientMessage(room, "p1", { type: "command", seq: 1, tick: room.tick, move: { x: 0, y: 0 }, aim: 0, fire: true, use: "none" });
+    stepRoom(room);
+    expect(room.map.walls.find((wall) => wall.id === "glass")?.destroyed).toBe(true);
+    expect(room.map.walls.find((wall) => wall.id === "mesh")?.destroyed).toBe(true);
+  });
+
+  it("destroys destructible solid walls after five shots and never destroys doors", () => {
+    const map = testMap();
+    map.spawns[1]!.position = { x: 260, y: 180 };
+    map.walls.push(createWall("panel", "solid", { x: 110, y: 80 }, { x: 110, y: 160 }, 8, { destructible: true }));
+    map.walls.push(createWall("door-target", "door", { x: 170, y: 80 }, { x: 170, y: 160 }, 8, { destructible: true }));
+    const room = activeRoom(map);
+    applyClientMessage(room, "p1", { type: "command", seq: 1, tick: room.tick, move: { x: 0, y: 0 }, aim: 0, fire: true, use: "none" });
+    for (let i = 0; i < 13; i += 1) stepRoom(room);
+    expect(room.map.walls.find((wall) => wall.id === "panel")?.destroyed).toBe(true);
+    for (let i = 0; i < 4; i += 1) stepRoom(room);
+    expect(room.map.walls.find((wall) => wall.id === "door-target")?.destroyed).not.toBe(true);
+  });
+
+  it("requires both players to request a rematch before resetting scores", () => {
+    const room = activeRoom(testMap());
+    shootUntilRoundEnds(room);
+    for (let i = 0; i < 46; i += 1) stepRoom(room);
+    shootUntilRoundEnds(room);
+    applyClientMessage(room, "p1", { type: "rematch" });
+    expect(room.round.phase).toBe("ended");
+    applyClientMessage(room, "p2", { type: "rematch" });
+    expect(room.round.phase).toBe("countdown");
+    expect(room.round.scores).toEqual({ p1: 0, p2: 0 });
+    expect(room.players.p1.hp).toBe(5);
+  });
 });
+
+function activeRoom(map: MapDefinition) {
+  const room = createRoom("combat", map);
+  joinRoom(room, false, "p1");
+  joinRoom(room, false, "p2");
+  for (let i = 0; i < 46; i += 1) stepRoom(room);
+  return room;
+}
+
+function shootUntilRoundEnds(room: ReturnType<typeof activeRoom>): void {
+  applyClientMessage(room, "p1", { type: "command", seq: room.tick, tick: room.tick, move: { x: 0, y: 0 }, aim: 0, fire: true, use: "none" });
+  for (let i = 0; i < 14 && room.round.phase === "active"; i += 1) stepRoom(room);
+}
 
 function testMap(): MapDefinition {
   return {

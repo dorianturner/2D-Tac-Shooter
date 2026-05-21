@@ -21,6 +21,8 @@ export const wallSchema = z.object({
   blocksVision: z.boolean(),
   blocksMovement: z.boolean(),
   destructible: z.boolean(),
+  hp: z.number().optional(),
+  maxHp: z.number().optional(),
   destroyed: z.boolean().optional()
 });
 

@@ -149,13 +149,15 @@ function createAndStoreRoom(roomId: string, map?: Parameters<typeof createRoom>[
 }
 
 function listRooms(): RoomSummary[] {
-  return [...rooms.values()].map((room) => ({
-    id: room.id,
-    mapId: room.map.id,
-    mapName: room.map.name,
-    playerCount: Object.values(room.slots).filter((slot) => slot.connected).length,
-    phase: room.round.phase
-  }));
+  return [...rooms.values()]
+    .filter((room) => room.round.phase !== "ended" && !room.round.matchWinner)
+    .map((room) => ({
+      id: room.id,
+      mapId: room.map.id,
+      mapName: room.map.name,
+      playerCount: Object.values(room.slots).filter((slot) => slot.connected).length,
+      phase: room.round.phase
+    }));
 }
 
 function createRoomId(): string {
