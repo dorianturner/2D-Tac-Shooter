@@ -1,11 +1,12 @@
 import type { GadgetKind } from "@tac/shared";
 
-export const TICK_RATE = 120;
+export const TICK_RATE = 60;
 export const TICK_MS = 1000 / TICK_RATE;
 export const PLAYER_SPEED = 240 / TICK_RATE;
 export const PLAYER_WALK_SPEED = 165 / TICK_RATE;
 export const PLAYER_RADIUS = 10;
 export const PLAYER_MAX_HP = 5;
+export const PLAYER_CLOSE_VISION_RADIUS = 80;
 export const VIEW_RANGE = 260;
 export const VIEW_FOV = (100 * Math.PI) / 180;
 export const FIRE_RANGE = 520;
@@ -50,6 +51,7 @@ export const DOOR_MAX_ANGULAR_ACCELERATION = 0.018;
 export const DOOR_COLLISION_SUBSTEPS = 6;
 export const DOOR_PUSH_SKIN = 11;
 export const DOOR_COLLISION_SKIN = 0.75;
+export const DOOR_TOGGLE_RANGE = 64;
 
 export const GADGET_LOADOUT: Record<GadgetKind, number> = {
   camera: 1,

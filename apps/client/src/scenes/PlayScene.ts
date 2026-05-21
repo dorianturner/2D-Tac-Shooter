@@ -9,7 +9,7 @@ const GADGET_RADII: Record<Exclude<GadgetKind, "wall">, number> = { camera: 120,
 const DEPLOYABLE_WALL_LENGTH = 36;
 const DEPLOYABLE_WALL_THICKNESS = 10;
 const ROOM_REFRESH_MS = 2000;
-const SERVER_TICK_MS = 1000 / 60;
+const SERVER_TICK_MS = 1000 / TICK_RATE;
 
 interface GadgetPreviewTarget {
   position: Vec2;
@@ -52,7 +52,7 @@ export class PlayScene extends Phaser.Scene {
     this.cameras.main.setBackgroundColor(colors.bg);
     this.mapLayer = this.add.graphics();
     this.entityLayer = this.add.graphics();
-    this.keys = this.input.keyboard?.addKeys("W,A,S,D,R,SHIFT,ONE,TWO,THREE,FOUR,FIVE") as Record<string, Phaser.Input.Keyboard.Key>;
+    this.keys = this.input.keyboard?.addKeys("W,A,S,D,E,R,SHIFT,ONE,TWO,THREE,FOUR,FIVE") as Record<string, Phaser.Input.Keyboard.Key>;
     this.input.on("pointerdown", (pointer: Phaser.Input.Pointer) => this.queueGadgetDeploy(pointer));
     this.input.on("wheel", (_pointer: Phaser.Input.Pointer, _objects: unknown[], _dx: number, dy: number) => {
       if (this.selectedGadget !== "wall") return;
@@ -83,7 +83,7 @@ export class PlayScene extends Phaser.Scene {
       },
       aim: this.currentAim,
       fire: pointer.isDown && pointer.button === 0 && this.selectedGadget === "none",
-      use: "none",
+      use: this.keys.E && Phaser.Input.Keyboard.JustDown(this.keys.E) ? "door-toggle" : "none",
       reload: this.keys.R ? Phaser.Input.Keyboard.JustDown(this.keys.R) : false,
       walk: Boolean(this.keys.SHIFT?.isDown),
       gadget: deploy ? deploy.gadget : "none",
@@ -110,7 +110,7 @@ export class PlayScene extends Phaser.Scene {
         <a class="back-link" href="/">Back</a>
         <p class="eyebrow">Local Multiplayer</p>
         <h1>Create Or Join</h1>
-        <p>Pick a saved map, create a room, then open another tab to join it. Movement is WASD and doors are pushed by walking into them.</p>
+        <p>Pick a saved map, create a room, then open another tab to join it. Movement is WASD; doors can be pushed or toggled with E.</p>
         <div class="menu-actions">
           <button class="primary-action" data-action="create">Create Game</button>
           <button class="secondary-action" data-action="join">Join Game</button>

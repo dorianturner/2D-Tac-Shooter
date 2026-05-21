@@ -178,6 +178,30 @@ describe("authoritative simulation", () => {
     expect(snapshotFor(room, "p1").visiblePlayers[0]?.id).toBe("p2");
   });
 
+  it("reveals nearby opponents in close vision outside the forward cone", () => {
+    const room = activeRoom(testMap());
+    room.players.p1.aim = Math.PI;
+    room.players.p2.position = { x: 95, y: 120 };
+    const snapshot = snapshotFor(room, "p1");
+    expect(snapshot.visiblePlayers[0]?.id).toBe("p2");
+    expect(snapshot.visibleCircles).toContainEqual({ position: room.players.p1.position, radius: 80 });
+  });
+
+  it("blocks close vision through solid walls and smoke", () => {
+    const wallMap = testMap();
+    wallMap.walls.push(createWall("close-blocker", "solid", { x: 75, y: 80 }, { x: 75, y: 160 }, 8));
+    const wallRoom = activeRoom(wallMap);
+    wallRoom.players.p1.aim = Math.PI;
+    wallRoom.players.p2.position = { x: 95, y: 120 };
+    expect(snapshotFor(wallRoom, "p1").visiblePlayers).toHaveLength(0);
+
+    const smokeRoom = activeRoom(testMap());
+    smokeRoom.players.p1.aim = Math.PI;
+    smokeRoom.players.p2.position = { x: 95, y: 120 };
+    smokeRoom.smokes.push({ id: "close-smoke", owner: "p2", position: { x: 75, y: 120 }, radius: 20, createdAtTick: smokeRoom.tick, expiresAtTick: smokeRoom.tick + 100 });
+    expect(snapshotFor(smokeRoom, "p1").visiblePlayers).toHaveLength(0);
+  });
+
   it("blocks hinged doors from rotating through another player", () => {
     const map = testMap();
     map.walls.push(createWall("door-1", "door", { x: 120, y: 90 }, { x: 120, y: 150 }, 8));
@@ -266,9 +290,39 @@ describe("authoritative simulation", () => {
     expect(mirroredRoom.players.p1.position.x).toBeLessThan(150);
   });
 
+  it("toggles the nearest door open and closed with a queued use action", () => {
+    const map = testMap();
+    map.walls.push(createWall("toggle-door", "door", { x: 120, y: 90 }, { x: 120, y: 150 }, 8));
+    const room = activeRoom(map);
+    const door = room.map.walls.find((wall) => wall.id === "toggle-door")!;
+    room.players.p1.position = { x: 100, y: 120 };
+    applyClientMessage(room, "p1", { type: "command", seq: 1, tick: room.tick, move: { x: 0, y: 0 }, aim: 0, fire: false, use: "door-toggle" });
+    applyClientMessage(room, "p1", { type: "command", seq: 2, tick: room.tick, move: { x: 0, y: 0 }, aim: 0, fire: false, use: "none" });
+    stepRoom(room);
+    expect(snapshotFor(room, "p1").actionResults).toContainEqual({ seq: 1, action: "use", accepted: true });
+    expect(door.targetAngle).toBeLessThan(0);
+    for (let i = 0; i < 120; i += 1) stepRoom(room);
+    expect(door.currentAngle ?? 0).toBeLessThan(-1.6);
+
+    applyClientMessage(room, "p1", { type: "command", seq: 3, tick: room.tick, move: { x: 0, y: 0 }, aim: 0, fire: false, use: "door-toggle" });
+    stepRoom(room);
+    expect(door.targetAngle).toBe(0);
+    for (let i = 0; i < 120; i += 1) stepRoom(room);
+    expect(Math.abs(door.currentAngle ?? 1)).toBeLessThan(0.08);
+  });
+
+  it("rejects door toggle when no door is nearby", () => {
+    const map = testMap();
+    map.walls.push(createWall("far-door", "door", { x: 220, y: 40 }, { x: 220, y: 100 }, 8));
+    const room = activeRoom(map);
+    applyClientMessage(room, "p1", { type: "command", seq: 1, tick: room.tick, move: { x: 0, y: 0 }, aim: 0, fire: false, use: "door-toggle" });
+    stepRoom(room);
+    expect(snapshotFor(room, "p1").actionResults).toContainEqual({ seq: 1, action: "use", accepted: false, reason: "invalid" });
+  });
+
   it("filters opponents outside the forward vision cone", () => {
     const room = activeRoom(testMap());
-    room.players.p2.position = { x: 50, y: 200 };
+    room.players.p2.position = { x: 50, y: 210 };
     room.players.p1.aim = 0;
     expect(snapshotFor(room, "p1").visiblePlayers).toHaveLength(0);
   });

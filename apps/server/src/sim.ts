@@ -42,6 +42,7 @@ import {
   DOOR_MAX_ANGULAR_SPEED,
   DOOR_PUSH_SKIN,
   DOOR_PUSH_STRENGTH,
+  DOOR_TOGGLE_RANGE,
   FIRE_COOLDOWN_TICKS,
   FIRE_RANGE,
   GADGET_LOADOUT,
@@ -50,6 +51,7 @@ import {
   MOLOTOV_RANGE,
   MOLOTOV_RADIUS,
   MOLOTOV_TICKS,
+  PLAYER_CLOSE_VISION_RADIUS,
   PLAYER_WALK_SPEED,
   PLAYER_MAX_HP,
   PLAYER_RADIUS,
@@ -84,7 +86,7 @@ type InputState = Pick<PlayerCommand, "move" | "aim" | "fire" | "walk">;
 
 type PendingAction =
   | { seq: number; type: "reload" }
-  | { seq: number; type: "use"; use: "breach" }
+  | { seq: number; type: "use"; use: "breach" | "door-toggle" }
   | { seq: number; type: "gadget"; gadget: GadgetKind; target: Vec2; angle?: number };
 
 type ActionRejectReason = NonNullable<ActionResult["reason"]>;
@@ -225,7 +227,7 @@ export function applyClientMessage(room: RoomState, playerId: PlayerId, message:
 function enqueueCommandActions(slot: PlayerSlot, command: PlayerCommand): void {
   const actions: PendingAction[] = [];
   if (command.reload) actions.push({ seq: command.seq, type: "reload" });
-  if (command.use === "breach") actions.push({ seq: command.seq, type: "use", use: "breach" });
+  if (command.use === "breach" || command.use === "door-toggle") actions.push({ seq: command.seq, type: "use", use: command.use });
   if (command.gadget && command.gadget !== "none" && command.gadgetTarget) {
     actions.push({ seq: command.seq, type: "gadget", gadget: command.gadget, target: command.gadgetTarget, ...(command.gadgetAngle !== undefined ? { angle: command.gadgetAngle } : {}) });
   }
@@ -258,7 +260,7 @@ function processPendingActions(room: RoomState, player: PlayerState, slot: Playe
       continue;
     }
     if (action.type === "use") {
-      const accepted = breachNearestWall(room, player);
+      const accepted = action.use === "breach" ? breachNearestWall(room, player) : toggleNearestDoor(room, player);
       recordActionResult(slot, action.seq, "use", accepted, accepted ? undefined : "invalid");
       continue;
     }
@@ -400,7 +402,7 @@ function collectDoorPushes(room: RoomState, current: Vec2, desired: Vec2, delta:
     const rawImpulse = normalizedTorque * DOOR_PUSH_STRENGTH * closeness * contactScale;
     const impulse = Math.max(-DOOR_MAX_ANGULAR_ACCELERATION, Math.min(DOOR_MAX_ANGULAR_ACCELERATION, rawImpulse));
     door.angularVelocity = clampDoorSpeed((door.angularVelocity ?? 0) + impulse);
-    door.targetAngle = Math.max(-DOOR_MAX_ANGLE, Math.min(DOOR_MAX_ANGLE, (door.currentAngle ?? 0) + impulse * 7));
+    delete door.targetAngle;
     door.lastPushTick = room.tick;
   }
 }
@@ -448,6 +450,19 @@ function moveWithCapsuleCollision(map: MapDefinition, current: Vec2, desired: Ve
 function integrateDoors(room: RoomState): void {
   for (const door of room.map.walls) {
     if (door.kind !== "door" || !door.hinge || !door.closedB || door.destroyed) continue;
+    if (door.targetAngle !== undefined) {
+      const delta = door.targetAngle - (door.currentAngle ?? 0);
+      if (Math.abs(delta) < 0.015 && Math.abs(door.angularVelocity ?? 0) < 0.006) {
+        door.currentAngle = door.targetAngle;
+        door.a = door.hinge;
+        door.b = rotateDoorEndpoint(door.hinge, door.closedB, door.currentAngle);
+        door.angularVelocity = 0;
+        delete door.targetAngle;
+      } else {
+        const desiredAcceleration = Math.sign(delta) * DOOR_MAX_ANGULAR_ACCELERATION;
+        door.angularVelocity = clampDoorSpeed((door.angularVelocity ?? 0) + desiredAcceleration);
+      }
+    }
     door.angularVelocity = clampDoorSpeed(door.angularVelocity ?? 0);
     for (let substep = 0; substep < DOOR_COLLISION_SUBSTEPS; substep += 1) {
       const previousAngle = door.currentAngle ?? 0;
@@ -457,7 +472,7 @@ function integrateDoors(room: RoomState): void {
       if (doorWouldPushIntoPlayer(room, door, nextB) || doorWouldHitWall(room, door, nextB)) {
         door.currentAngle = previousAngle;
         door.angularVelocity = 0;
-        door.targetAngle = previousAngle;
+        delete door.targetAngle;
         door.blockedUntilTick = room.tick + 4;
         door.a = door.hinge;
         door.b = previousB;
@@ -569,6 +584,31 @@ function startReload(player: PlayerState, tick: number): boolean {
   if (player.isReloading || player.ammo >= player.magSize) return false;
   player.isReloading = true;
   player.reloadEndsAtTick = tick + RELOAD_TICKS;
+  return true;
+}
+
+function toggleNearestDoor(room: RoomState, player: PlayerState): boolean {
+  const door = room.map.walls
+    .filter((candidate) => candidate.kind === "door" && !candidate.destroyed && candidate.hinge && candidate.closedB)
+    .map((candidate) => ({
+      door: candidate,
+      distance: Math.max(0, distanceToSegment(player.position, candidate.a, candidate.b) - PLAYER_RADIUS - candidate.thickness / 2)
+    }))
+    .filter(({ distance: doorDistance }) => doorDistance <= DOOR_TOGGLE_RANGE)
+    .sort((a, b) => a.distance - b.distance)[0]?.door;
+  if (!door?.hinge || !door.closedB) return false;
+
+  const currentAngle = door.currentAngle ?? 0;
+  if (Math.abs(currentAngle) > DOOR_MAX_ANGLE * 0.45) {
+    door.targetAngle = 0;
+    return true;
+  }
+
+  const panel = { x: door.b.x - door.hinge.x, y: door.b.y - door.hinge.y };
+  const playerOffset = { x: player.position.x - door.hinge.x, y: player.position.y - door.hinge.y };
+  const side = cross(panel, playerOffset);
+  const sign = Math.abs(side) > 0.001 ? -Math.sign(side) : Math.sign(Math.cos(player.aim)) || 1;
+  door.targetAngle = sign * DOOR_MAX_ANGLE;
   return true;
 }
 
@@ -895,7 +935,10 @@ export function snapshotFor(room: RoomState, playerId: PlayerId): ServerSnapshot
     gadgets: { cameras: visibleCameras, molotovs: visibleMolotovs, smokes: visibleSmokes, soundSensors: visibleSoundSensors },
     shotImpacts: visibleShotImpacts,
     visiblePolygon: polygon,
-    visibleCircles: room.deployedCameras.filter((camera) => camera.owner === playerId && !camera.destroyed).map((camera) => ({ position: camera.position, radius: camera.radius })),
+    visibleCircles: [
+      { position: { ...self.position }, radius: PLAYER_CLOSE_VISION_RADIUS },
+      ...room.deployedCameras.filter((camera) => camera.owner === playerId && !camera.destroyed).map((camera) => ({ position: camera.position, radius: camera.radius }))
+    ],
     explored: room.slots[playerId].explored,
     actionResults: room.slots[playerId].actionResults.slice(-12)
   };
@@ -914,6 +957,7 @@ export function snapshotFor(room: RoomState, playerId: PlayerId): ServerSnapshot
 }
 
 function isPointVisibleToPlayer(room: RoomState, player: PlayerState, point: Vec2): boolean {
+  if (distance(player.position, point) <= PLAYER_CLOSE_VISION_RADIUS && hasLineOfSightWithSmoke(room.map, room.smokes, player.position, point)) return true;
   if (hasConeLineOfSightWithSmoke(room.map, room.smokes, player.position, player.aim, VIEW_FOV, VIEW_RANGE, point)) return true;
   return room.deployedCameras.some((camera) => camera.owner === player.id && !camera.destroyed && distance(camera.position, point) <= camera.radius && hasLineOfSightWithSmoke(room.map, room.smokes, camera.position, point));
 }

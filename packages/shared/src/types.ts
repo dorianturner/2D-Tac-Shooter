@@ -104,7 +104,7 @@ export interface PlayerCommand {
   move: Vec2;
   aim: number;
   fire: boolean;
-  use: "none" | "breach";
+  use: "none" | "breach" | "door-toggle";
   reload?: boolean;
   gadget?: "none" | GadgetKind;
   gadgetTarget?: Vec2;
