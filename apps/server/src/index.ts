@@ -2,7 +2,7 @@ import { createServer } from "node:http";
 import { WebSocketServer, type WebSocket } from "ws";
 import type { ClientHello, ClientMessage, PlayerId, RoomSummary, ServerMessage } from "@tac/shared";
 import { listMaps, readMap, writeMap } from "./mapStore.js";
-import { applyClientMessage, createRoom, joinRoom, snapshotFor, stepRoom, TICK_MS, type RoomState } from "./sim.js";
+import { applyClientMessage, createRoom, isExpiredUnfilledLobby, joinRoom, snapshotFor, stepRoom, TICK_MS, type RoomState } from "./sim.js";
 
 const PORT = Number(process.env.PORT ?? 8787);
 const rooms = new Map<string, RoomState>();
@@ -44,9 +44,11 @@ wss.on("connection", (socket) => {
 });
 
 setInterval(() => {
+  cleanupExpiredRooms();
   for (const room of rooms.values()) {
     stepRoom(room);
   }
+  cleanupEndedRooms();
   for (const [socket, session] of sockets.entries()) {
     const room = rooms.get(session.roomId);
     if (!room || socket.readyState !== socket.OPEN) continue;
@@ -75,6 +77,7 @@ async function handleHttp(request: import("node:http").IncomingMessage, response
       return;
     }
     if (request.method === "GET" && url.pathname === "/api/rooms") {
+      cleanupExpiredRooms();
       sendJson(response, 200, { rooms: listRooms() });
       return;
     }
@@ -115,7 +118,7 @@ function sendJson(response: import("node:http").ServerResponse, status: number, 
 
 async function handleHello(socket: WebSocket, hello: ClientHello): Promise<void> {
   let preferred: PlayerId | undefined;
-  let roomId = hello.roomId || (hello.mode === "create" ? createRoomId() : "local");
+  let roomId = hello.mode === "create" ? createRoomId() : hello.roomId || "local";
   if (hello.reconnectToken) {
     const existing = reconnect.get(hello.reconnectToken);
     if (existing) {
@@ -126,6 +129,10 @@ async function handleHello(socket: WebSocket, hello: ClientHello): Promise<void>
   let room = rooms.get(roomId);
   if (!room && hello.mode === "join") {
     send(socket, { type: "error", message: `Room ${roomId} does not exist` });
+    return;
+  }
+  if (room && (room.round.phase === "ended" || room.round.matchWinner)) {
+    send(socket, { type: "error", message: `Room ${roomId} has ended` });
     return;
   }
   if (!room) {
@@ -149,6 +156,8 @@ function createAndStoreRoom(roomId: string, map?: Parameters<typeof createRoom>[
 }
 
 function listRooms(): RoomSummary[] {
+  cleanupExpiredRooms();
+  cleanupEndedRooms();
   return [...rooms.values()]
     .filter((room) => room.round.phase !== "ended" && !room.round.matchWinner)
     .map((room) => ({
@@ -158,6 +167,33 @@ function listRooms(): RoomSummary[] {
       playerCount: Object.values(room.slots).filter((slot) => slot.connected).length,
       phase: room.round.phase
     }));
+}
+
+function cleanupEndedRooms(): void {
+  for (const [roomId, room] of rooms.entries()) {
+    if (room.round.phase !== "ended" && !room.round.matchWinner) continue;
+    for (const [token, session] of reconnect.entries()) {
+      if (session.roomId === roomId) reconnect.delete(token);
+    }
+    if ([...sockets.values()].some((session) => session.roomId === roomId)) continue;
+    rooms.delete(roomId);
+  }
+}
+
+function cleanupExpiredRooms(nowMs = Date.now()): void {
+  for (const [roomId, room] of rooms.entries()) {
+    if (!isExpiredUnfilledLobby(room, nowMs)) continue;
+    for (const [socket, session] of sockets.entries()) {
+      if (session.roomId !== roomId) continue;
+      send(socket, { type: "error", message: "Lobby expired" });
+      sockets.delete(socket);
+      socket.close();
+    }
+    for (const [token, session] of reconnect.entries()) {
+      if (session.roomId === roomId) reconnect.delete(token);
+    }
+    rooms.delete(roomId);
+  }
 }
 
 function createRoomId(): string {

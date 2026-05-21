@@ -73,7 +73,7 @@ export const mapSchema = z.object({
     z.object({
       id: z.string().min(1),
       owner: z.enum(["p1", "p2"]),
-      kind: z.enum(["camera", "motion"]),
+      kind: z.enum(["camera", "motion", "sound"]),
       position: vec2,
       angle: z.number(),
       range: z.number().positive(),

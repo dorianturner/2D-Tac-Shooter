@@ -262,18 +262,82 @@ canvas {
 }
 
 .play-shell.in-game .play-panel {
-  width: min(720px, calc(100vw - 32px));
+  width: min(620px, calc(100vw - 32px));
   margin-top: 16px;
   padding: 12px;
   pointer-events: auto;
 }
 
 .play-shell.in-game .play-panel h1,
-.play-shell.in-game .play-panel p:not(.play-hud),
+.play-shell.in-game .play-panel p,
 .play-shell.in-game .menu-actions,
 .play-shell.in-game .room-list,
 .play-shell.in-game .eyebrow {
   display: none;
+}
+
+.play-hud {
+  display: grid;
+  gap: 8px;
+}
+
+.hud-topline,
+.hud-loadout,
+.hud-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.hud-topline strong {
+  color: #d7f3ff;
+  font-size: 20px;
+  letter-spacing: 0;
+}
+
+.hud-bars label {
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 4px;
+  color: #d7f3ff;
+}
+
+.health-track {
+  height: 8px;
+  overflow: hidden;
+  border: 1px solid rgba(118, 219, 255, 0.24);
+  background: rgba(5, 12, 18, 0.95);
+  border-radius: 4px;
+}
+
+.health-track i {
+  display: block;
+  height: 100%;
+  background: #5df2b6;
+}
+
+.hud-loadout button {
+  border: 1px solid rgba(118, 219, 255, 0.3);
+  background: rgba(5, 12, 18, 0.95);
+  color: #d7f3ff;
+  padding: 6px 8px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.hud-loadout button.selected {
+  border-color: rgba(93, 242, 182, 0.8);
+  background: rgba(24, 94, 83, 0.88);
+}
+
+.hud-loadout .warn {
+  color: #ffcc66;
+}
+
+.hud-meta {
+  justify-content: center;
+  color: #6f8997;
 }
 
 .room-list {

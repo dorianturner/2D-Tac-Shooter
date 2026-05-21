@@ -1,5 +1,5 @@
 import Phaser from "phaser";
-import type { Detection, MapDefinition, ServerSnapshot, Vec2, Wall } from "@tac/shared";
+import type { DeployedCamera, Detection, MapDefinition, MolotovZone, ServerSnapshot, SmokeZone, SoundSensorZone, Vec2, Wall } from "@tac/shared";
 
 export const colors = {
   bg: 0x05070a,
@@ -82,6 +82,78 @@ export function drawSnapshot(g: Phaser.GameObjects.Graphics, snapshot: ServerSna
   }
 }
 
+export function drawFogOfWar(g: Phaser.GameObjects.Graphics, map: MapDefinition, visiblePolygon: Vec2[], visibleCircles: ServerSnapshot["visibleCircles"] = []): void {
+  if (visiblePolygon.length < 3) return;
+  g.fillStyle(colors.fog, 0.58);
+  g.beginPath();
+  g.moveTo(0, 0);
+  g.lineTo(map.bounds.width, 0);
+  g.lineTo(map.bounds.width, map.bounds.height);
+  g.lineTo(0, map.bounds.height);
+  g.closePath();
+  for (let i = visiblePolygon.length - 1; i >= 0; i -= 1) {
+    const point = visiblePolygon[i]!;
+    if (i === visiblePolygon.length - 1) g.moveTo(point.x, point.y);
+    else g.lineTo(point.x, point.y);
+  }
+  g.closePath();
+  for (const circle of visibleCircles) {
+    g.moveTo(circle.position.x + circle.radius, circle.position.y);
+    g.arc(circle.position.x, circle.position.y, circle.radius, 0, Math.PI * 2, true);
+    g.closePath();
+  }
+  g.fillPath();
+  g.fillStyle(0x173f4f, 0.13);
+  fillPolygon(g, visiblePolygon);
+  for (const circle of visibleCircles) {
+    g.fillStyle(0x173f4f, 0.11);
+    g.fillCircle(circle.position.x, circle.position.y, circle.radius);
+  }
+}
+
+export function drawDeployedCamera(g: Phaser.GameObjects.Graphics, camera: DeployedCamera, owned: boolean): void {
+  if (camera.destroyed) {
+    g.lineStyle(1, colors.destroyed, 0.6);
+    g.strokeCircle(camera.position.x, camera.position.y, 7);
+    return;
+  }
+  g.lineStyle(1, colors.sensor, owned ? 0.46 : 0.28);
+  g.strokeCircle(camera.position.x, camera.position.y, camera.radius);
+  g.fillStyle(colors.sensor, owned ? 0.95 : 0.58);
+  g.fillCircle(camera.position.x, camera.position.y, 6);
+  g.lineStyle(2, colors.sensor, owned ? 0.9 : 0.45);
+  g.strokeCircle(camera.position.x, camera.position.y, 9);
+}
+
+export function drawMolotovZone(g: Phaser.GameObjects.Graphics, zone: MolotovZone, tick: number): void {
+  const remaining = Math.max(0, zone.expiresAtTick - tick);
+  const alpha = Math.max(0.18, Math.min(0.48, remaining / 150));
+  g.fillStyle(0xff6f3c, alpha);
+  g.fillCircle(zone.position.x, zone.position.y, zone.radius);
+  g.lineStyle(2, 0xffcc66, 0.72);
+  g.strokeCircle(zone.position.x, zone.position.y, zone.radius);
+}
+
+export function drawSmokeZone(g: Phaser.GameObjects.Graphics, zone: SmokeZone, tick: number): void {
+  const remaining = Math.max(0, zone.expiresAtTick - tick);
+  const alpha = Math.max(0.2, Math.min(0.54, remaining / 150));
+  g.fillStyle(0x66727d, alpha);
+  g.fillCircle(zone.position.x, zone.position.y, zone.radius);
+  g.lineStyle(2, 0xb6c3cc, 0.46);
+  g.strokeCircle(zone.position.x, zone.position.y, zone.radius);
+}
+
+export function drawSoundSensorZone(g: Phaser.GameObjects.Graphics, zone: SoundSensorZone, tick: number): void {
+  const triggered = (zone.triggeredUntilTick ?? 0) >= tick;
+  const color = triggered ? colors.warning : colors.sensor;
+  g.lineStyle(2, color, triggered ? 0.78 : 0.34);
+  g.strokeCircle(zone.position.x, zone.position.y, zone.radius);
+  g.fillStyle(color, triggered ? 0.12 : 0.06);
+  g.fillCircle(zone.position.x, zone.position.y, zone.radius);
+  g.fillStyle(color, 0.82);
+  g.fillCircle(zone.position.x, zone.position.y, 5);
+}
+
 export function drawPlayer(g: Phaser.GameObjects.Graphics, position: Vec2, color: number, self: boolean, aim: number): void {
   g.fillStyle(color, self ? 1 : 0.86);
   g.fillCircle(position.x, position.y, self ? 10 : 9);
@@ -90,6 +162,13 @@ export function drawPlayer(g: Phaser.GameObjects.Graphics, position: Vec2, color
 }
 
 function drawDetection(g: Phaser.GameObjects.Graphics, detection: Detection): void {
+  if (detection.kind === "sound-area") {
+    g.lineStyle(2, colors.warning, detection.confidence);
+    g.strokeCircle(detection.position.x, detection.position.y, detection.radius ?? 80);
+    g.fillStyle(colors.warning, 0.12);
+    g.fillCircle(detection.position.x, detection.position.y, detection.radius ?? 80);
+    return;
+  }
   g.lineStyle(2, detection.kind === "motion-pulse" ? colors.warning : colors.sensor, detection.confidence);
   g.strokeCircle(detection.position.x, detection.position.y, 22 + (1 - detection.confidence) * 24);
   g.fillStyle(detection.kind === "motion-pulse" ? colors.warning : colors.sensor, 0.2);

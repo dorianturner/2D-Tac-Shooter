@@ -14,16 +14,11 @@ export class MenuScene extends Phaser.Scene {
       <section class="menu-panel">
         <p class="eyebrow">Tactical Signal Prototype</p>
         <h1>Information Warfare Shooter</h1>
-        <p class="menu-copy">Build readable maps, tag tactical surfaces, and test vision/sound information before live combat returns.</p>
+        <p class="menu-copy">Create a local match on a saved tactical map, or open the editor to build geometry, doors, spawns, and destructible surfaces.</p>
         <div class="menu-actions">
           <a class="primary-action" href="/play">Play</a>
           <a class="secondary-action" href="/editor">Map Editor</a>
         </div>
-        <dl class="menu-status">
-          <div><dt>Play</dt><dd>Dummy placeholder</dd></div>
-          <div><dt>Editor</dt><dd>Disk-backed JSON maps</dd></div>
-          <div><dt>Graphics</dt><dd>Demo tactical shapes</dd></div>
-        </dl>
       </section>
     `;
     document.body.appendChild(shell);

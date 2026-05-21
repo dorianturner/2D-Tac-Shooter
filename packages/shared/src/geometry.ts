@@ -101,6 +101,19 @@ export function visiblePolygon(map: MapDefinition, origin: Vec2, range = 420, ra
   return points;
 }
 
+export function visibleConePolygon(map: MapDefinition, origin: Vec2, angle: number, fov: number, range = 420, rays = 48): Vec2[] {
+  const points: Vec2[] = [origin];
+  const start = angle - fov / 2;
+  for (let i = 0; i <= rays; i += 1) {
+    points.push(raycast(map, origin, start + (i / rays) * fov, range));
+  }
+  return points;
+}
+
+export function hasConeLineOfSight(map: MapDefinition, origin: Vec2, angle: number, fov: number, range: number, target: Vec2): boolean {
+  return pointInCone(origin, angle, fov, range, target) && hasLineOfSight(map, origin, target);
+}
+
 export function moveWithWallCollision(map: MapDefinition, current: Vec2, desired: Vec2, radius: number): Vec2 {
   const clamped = {
     x: clamp(desired.x, radius, map.bounds.width - radius),

@@ -10,11 +10,13 @@ import {
   normalize,
   pointInCone,
   sampleMap,
-  visiblePolygon,
   type AuthoritativeEvent,
   type ClientMessage,
+  type DeployedCamera,
   type Detection,
+  type GadgetKind,
   type MapDefinition,
+  type MolotovZone,
   type PlayerCommand,
   type PlayerId,
   type PlayerState,
@@ -22,21 +24,49 @@ import {
   type ServerSnapshot,
   type ServerWelcome,
   type ShotImpact,
-  type Vec2
+  type SmokeZone,
+  type SoundSensorZone,
+  type Vec2,
+  type Wall
 } from "@tac/shared";
+import {
+  CAMERA_HIT_RADIUS,
+  CAMERA_RANGE,
+  CAMERA_RADIUS,
+  DEPLOYABLE_WALL_RANGE,
+  DOOR_DAMPING,
+  DOOR_MAX_ANGLE,
+  FIRE_COOLDOWN_TICKS,
+  FIRE_RANGE,
+  GADGET_LOADOUT,
+  MAG_SIZE,
+  MOLOTOV_DAMAGE_INTERVAL,
+  MOLOTOV_RANGE,
+  MOLOTOV_RADIUS,
+  MOLOTOV_TICKS,
+  PLAYER_WALK_SPEED,
+  PLAYER_MAX_HP,
+  PLAYER_RADIUS,
+  PLAYER_SPEED,
+  POST_GADGET_LOCKOUT_TICKS,
+  RELOAD_TICKS,
+  ROUND_COUNTDOWN_TICKS,
+  ROUND_TICKS,
+  SMOKE_RANGE,
+  SMOKE_RADIUS,
+  SMOKE_TICKS,
+  SOUND_SENSOR_HIT_RADIUS,
+  SOUND_SENSOR_RANGE,
+  SOUND_SENSOR_RADIUS,
+  SOUND_SENSOR_SPEED_THRESHOLD,
+  SOUND_SENSOR_TRIGGER_TICKS,
+  VIEW_FOV,
+  VIEW_RANGE
+} from "./sim/config.js";
+import { clampTarget, createDeployableWall, hasPlacementLineOfSight, isPlacementClear, resolveThrownTarget } from "./sim/deployables.js";
+import { hasConeLineOfSightWithSmoke, hasLineOfSightWithSmoke, visibleConePolygonWithSmoke } from "./sim/visibility.js";
 
-export const TICK_RATE = 30;
-export const TICK_MS = 1000 / TICK_RATE;
-const PLAYER_SPEED = 165 / TICK_RATE;
-const PLAYER_RADIUS = 10;
-const PLAYER_MAX_HP = 5;
-const VIEW_RANGE = 390;
-const FIRE_RANGE = 520;
-const FIRE_COOLDOWN_TICKS = 3;
-const ROUND_COUNTDOWN_TICKS = 45;
-const ROUND_TICKS = 90 * TICK_RATE;
-const DOOR_MAX_ANGLE = 1.92;
-const DOOR_DAMPING = 0.86;
+export { TICK_MS, TICK_RATE } from "./sim/config.js";
 
 interface AnalyticsEvent {
   type: string;
@@ -52,18 +82,27 @@ interface PlayerSlot {
   lastCommand: PlayerCommand;
   explored: Vec2[];
   nextFireTick: number;
+  nextActionTick: number;
+  lastGadgetSeq: number;
+  lastSeenWalls: Map<string, Wall>;
+  lastSeenCameras: Map<string, DeployedCamera>;
 }
 
 export interface RoomState {
   id: string;
   map: MapDefinition;
   baseMap: MapDefinition;
+  createdAtMs: number;
   tick: number;
   round: ServerSnapshot["round"];
   players: Record<PlayerId, PlayerState>;
   slots: Record<PlayerId, PlayerSlot>;
   detections: Detection[];
   shotImpacts: ShotImpact[];
+  deployedCameras: DeployedCamera[];
+  molotovs: MolotovZone[];
+  smokes: SmokeZone[];
+  soundSensors: SoundSensorZone[];
   rematchRequests: Set<PlayerId>;
   replay: ReplayLog;
   analytics: AnalyticsEvent[];
@@ -82,7 +121,12 @@ export function createRoom(id: string, sourceMap: MapDefinition = sampleMap): Ro
         velocity: { x: 0, y: 0 },
         aim: spawn.angle,
         alive: true,
-        hp: PLAYER_MAX_HP
+        hp: PLAYER_MAX_HP,
+        ammo: MAG_SIZE,
+        magSize: MAG_SIZE,
+        isReloading: false,
+        walking: false,
+        gadgets: { ...GADGET_LOADOUT }
       }
     ])
   ) as Record<PlayerId, PlayerState>;
@@ -91,12 +135,17 @@ export function createRoom(id: string, sourceMap: MapDefinition = sampleMap): Ro
     id,
     map,
     baseMap,
+    createdAtMs: Date.now(),
     tick: 0,
     round: { phase: "lobby", roundNumber: 1, scores: { p1: 0, p2: 0 }, startsAtTick: ROUND_COUNTDOWN_TICKS, endsAtTick: ROUND_COUNTDOWN_TICKS + ROUND_TICKS },
     players,
     slots: { p1: createSlot("p1"), p2: createSlot("p2") },
     detections: [],
     shotImpacts: [],
+    deployedCameras: [],
+    molotovs: [],
+    smokes: [],
+    soundSensors: [],
     rematchRequests: new Set(),
     replay: { mapId: map.id, mapVersion: map.version, seed: 1, commands: [], events: [] },
     analytics: []
@@ -111,7 +160,11 @@ function createSlot(id: PlayerId): PlayerSlot {
     reconnectToken: `${id}-${Math.random().toString(36).slice(2)}`,
     lastCommand: { type: "command", seq: 0, tick: 0, move: { x: 0, y: 0 }, aim: 0, fire: false, use: "none" },
     explored: [],
-    nextFireTick: 0
+    nextFireTick: 0,
+    nextActionTick: 0,
+    lastGadgetSeq: 0,
+    lastSeenWalls: new Map(),
+    lastSeenCameras: new Map()
   };
 }
 
@@ -142,7 +195,10 @@ export function applyClientMessage(room: RoomState, playerId: PlayerId, message:
 export function stepRoom(room: RoomState): void {
   room.tick += 1;
   room.shotImpacts = room.shotImpacts.filter((impact) => impact.tick >= room.tick - 5);
-  integrateDoors(room.map);
+  room.molotovs = room.molotovs.filter((zone) => zone.expiresAtTick >= room.tick);
+  room.smokes = room.smokes.filter((zone) => zone.expiresAtTick >= room.tick);
+  room.soundSensors = room.soundSensors.filter((zone) => !zone.destroyed);
+  integrateDoors(room);
   if (room.round.phase === "ended") return;
   if (room.round.phase === "countdown" && room.tick >= room.round.startsAtTick) {
     room.round.phase = "active";
@@ -156,19 +212,32 @@ export function stepRoom(room: RoomState): void {
   for (const player of Object.values(room.players)) {
     if (!player.alive) continue;
     const command = room.slots[player.id].lastCommand;
-    const delta = { x: command.move.x * PLAYER_SPEED, y: command.move.y * PLAYER_SPEED };
+    completeReload(player, room.tick);
+    player.walking = Boolean(command.walk);
+    const speed = player.walking ? PLAYER_WALK_SPEED : PLAYER_SPEED;
+    const delta = { x: command.move.x * speed, y: command.move.y * speed };
     const desired = add(player.position, delta);
     pushDoors(room.map, desired, delta);
     const next = moveWithWallCollision(room.map, player.position, desired, PLAYER_RADIUS);
     player.velocity = { x: next.x - player.position.x, y: next.y - player.position.y };
     player.position = next;
     player.aim = command.aim;
+    if (command.reload) startReload(player, room.tick);
+    if (command.gadget && command.gadget !== "none" && command.gadgetTarget && room.tick >= room.slots[player.id].nextActionTick && command.seq !== room.slots[player.id].lastGadgetSeq) {
+      room.slots[player.id].lastGadgetSeq = command.seq;
+      if (deployGadget(room, player, command.gadget, command.gadgetTarget, command.gadgetAngle ?? player.aim)) {
+        room.slots[player.id].nextActionTick = room.tick + POST_GADGET_LOCKOUT_TICKS;
+        room.slots[player.id].nextFireTick = Math.max(room.slots[player.id].nextFireTick, room.slots[player.id].nextActionTick);
+      }
+    }
     if (command.use === "breach") breachNearestWall(room, player);
-    if (command.fire) resolveShot(room, player.id);
+    if (command.fire && room.tick >= room.slots[player.id].nextActionTick) resolveShot(room, player.id);
     room.analytics.push({ type: "movement-sample", tick: room.tick, data: { playerId: player.id, position: player.position } });
   }
 
   resolveSensors(room);
+  resolveSoundSensors(room);
+  resolveMolotovDamage(room);
   room.detections = room.detections.filter((detection) => detection.expiresAtTick >= room.tick);
   if (room.tick >= room.round.endsAtTick) finishRound(room, "draw", "timer");
 }
@@ -189,7 +258,7 @@ export function initializeRuntimeMap(map: MapDefinition): MapDefinition {
         currentAngle: withHp.currentAngle ?? 0,
         angularVelocity: withHp.angularVelocity ?? 0,
         blocksMovement: true,
-        blocksVision: false,
+        blocksVision: true,
         a: hinge,
         b: rotateDoorEndpoint(hinge, closedB, withHp.currentAngle ?? 0)
       };
@@ -217,16 +286,37 @@ function pushDoors(map: MapDefinition, desired: Vec2, delta: Vec2): void {
   }
 }
 
-function integrateDoors(map: MapDefinition): void {
-  for (const door of map.walls) {
+function integrateDoors(room: RoomState): void {
+  for (const door of room.map.walls) {
     if (door.kind !== "door" || !door.hinge || !door.closedB || door.destroyed) continue;
+    const previousAngle = door.currentAngle ?? 0;
+    const previousB = door.b;
     const angle = Math.max(-DOOR_MAX_ANGLE, Math.min(DOOR_MAX_ANGLE, (door.currentAngle ?? 0) + (door.angularVelocity ?? 0)));
+    const nextB = rotateDoorEndpoint(door.hinge, door.closedB, angle);
+    if (doorWouldPushIntoPlayer(room, door, nextB)) {
+      door.currentAngle = previousAngle;
+      door.angularVelocity = 0;
+      door.a = door.hinge;
+      door.b = previousB;
+      continue;
+    }
     door.currentAngle = angle;
     door.angularVelocity = (door.angularVelocity ?? 0) * DOOR_DAMPING;
     if (Math.abs(door.angularVelocity) < 0.0005) door.angularVelocity = 0;
     door.a = door.hinge;
-    door.b = rotateDoorEndpoint(door.hinge, door.closedB, angle);
+    door.b = nextB;
   }
+}
+
+function doorWouldPushIntoPlayer(room: RoomState, door: MapDefinition["walls"][number], nextB: Vec2): boolean {
+  if (!door.hinge) return false;
+  const threshold = PLAYER_RADIUS + door.thickness / 2;
+  return Object.values(room.players).some((player) => {
+    if (!player.alive) return false;
+    const currentDistance = distanceToSegment(player.position, door.a, door.b);
+    const nextDistance = distanceToSegment(player.position, door.hinge!, nextB);
+    return nextDistance < threshold && nextDistance < currentDistance - 0.25;
+  });
 }
 
 function rotateDoorEndpoint(hinge: Vec2, closedB: Vec2, angle: number): Vec2 {
@@ -235,16 +325,76 @@ function rotateDoorEndpoint(hinge: Vec2, closedB: Vec2, angle: number): Vec2 {
   return add(hinge, mul(angleToVector(base + angle), length));
 }
 
+function completeReload(player: PlayerState, tick: number): void {
+  if (!player.isReloading || player.reloadEndsAtTick === undefined || tick < player.reloadEndsAtTick) return;
+  player.ammo = player.magSize;
+  player.isReloading = false;
+  delete player.reloadEndsAtTick;
+}
+
+function startReload(player: PlayerState, tick: number): void {
+  if (player.isReloading || player.ammo >= player.magSize) return;
+  player.isReloading = true;
+  player.reloadEndsAtTick = tick + RELOAD_TICKS;
+}
+
+function deployGadget(room: RoomState, player: PlayerState, gadget: GadgetKind, target: Vec2, angle: number): boolean {
+  if (player.gadgets[gadget] <= 0) return false;
+  const maxRange = gadget === "camera" ? CAMERA_RANGE : gadget === "wall" ? DEPLOYABLE_WALL_RANGE : gadget === "smoke" ? SMOKE_RANGE : MOLOTOV_RANGE;
+  const range = gadget === "sound" ? SOUND_SENSOR_RANGE : maxRange;
+  const thrown = gadget === "molotov" || gadget === "smoke" ? resolveThrownTarget(room.map, player.position, target, range) : undefined;
+  const position = thrown?.position ?? clampTarget(room.map, player.position, target, range);
+  if (thrown && !thrown.valid) return false;
+  if (!hasPlacementLineOfSight(room.map, player.position, position)) return false;
+  if ((gadget === "camera" || gadget === "sound" || gadget === "wall") && !isPlacementClear(room.map, position, gadget === "wall" ? PLAYER_RADIUS : 7)) return false;
+  player.gadgets[gadget] -= 1;
+  if (gadget === "camera") {
+    const camera: DeployedCamera = { id: `${player.id}-cam-${room.tick}-${room.deployedCameras.length}`, owner: player.id, position, radius: CAMERA_RADIUS, hp: 1 };
+    room.deployedCameras.push(camera);
+    room.slots[player.id].lastSeenCameras.set(camera.id, structuredClone(camera));
+    pushEvent(room, { type: "camera-deployed", tick: room.tick, playerId: player.id, cameraId: camera.id });
+    return true;
+  } else if (gadget === "molotov") {
+    const zone: MolotovZone = { id: `${player.id}-molotov-${room.tick}-${room.molotovs.length}`, owner: player.id, position, radius: MOLOTOV_RADIUS, createdAtTick: room.tick, expiresAtTick: room.tick + MOLOTOV_TICKS };
+    room.molotovs.push(zone);
+    pushEvent(room, { type: "molotov-deployed", tick: room.tick, playerId: player.id, molotovId: zone.id });
+    return true;
+  } else if (gadget === "smoke") {
+    const zone: SmokeZone = { id: `${player.id}-smoke-${room.tick}-${room.smokes.length}`, owner: player.id, position, radius: SMOKE_RADIUS, createdAtTick: room.tick, expiresAtTick: room.tick + SMOKE_TICKS };
+    room.smokes.push(zone);
+    pushEvent(room, { type: "smoke-deployed", tick: room.tick, playerId: player.id, smokeId: zone.id });
+    return true;
+  } else if (gadget === "sound") {
+    const sensor: SoundSensorZone = { id: `${player.id}-sound-${room.tick}-${room.soundSensors.length}`, owner: player.id, position, radius: SOUND_SENSOR_RADIUS, hp: 1, createdAtTick: room.tick };
+    room.soundSensors.push(sensor);
+    pushEvent(room, { type: "sound-sensor-deployed", tick: room.tick, playerId: player.id, sensorId: sensor.id });
+    return true;
+  } else {
+    const wall = createDeployableWall(`${player.id}-wall-${room.tick}-${room.map.walls.length}`, position, angle);
+    room.map.walls.push(wall);
+    room.slots[player.id].lastSeenWalls.set(wall.id, structuredClone(wall));
+    pushEvent(room, { type: "deployable-wall-deployed", tick: room.tick, playerId: player.id, wallId: wall.id });
+    return true;
+  }
+}
+
 function resolveShot(room: RoomState, shooterId: PlayerId): void {
   const slot = room.slots[shooterId];
   if (room.tick < slot.nextFireTick) return;
-  slot.nextFireTick = room.tick + FIRE_COOLDOWN_TICKS;
   const shooter = room.players[shooterId];
   if (!shooter.alive) return;
+  completeReload(shooter, room.tick);
+  if (shooter.isReloading) return;
+  if (shooter.ammo <= 0) {
+    startReload(shooter, room.tick);
+    return;
+  }
+  shooter.ammo -= 1;
+  slot.nextFireTick = room.tick + FIRE_COOLDOWN_TICKS;
   const origin = { ...shooter.position };
   const rayEnd = add(origin, mul(angleToVector(shooter.aim), FIRE_RANGE));
   const hit = resolveHitscan(room, shooterId, origin, rayEnd);
-  const impact: ShotImpact = { id: `${shooterId}-${room.tick}-${room.shotImpacts.length}`, tick: room.tick, shooter: shooterId, origin, end: hit.end, hit: hit.kind, ...(hit.targetId ? { targetId: hit.targetId } : {}), ...(hit.wallId ? { wallId: hit.wallId } : {}) };
+  const impact: ShotImpact = { id: `${shooterId}-${room.tick}-${room.shotImpacts.length}`, tick: room.tick, shooter: shooterId, origin, end: hit.end, hit: hit.kind, ...(hit.targetId ? { targetId: hit.targetId } : {}), ...(hit.wallId ? { wallId: hit.wallId } : {}), ...(hit.cameraId ? { cameraId: hit.cameraId } : {}), ...(hit.soundSensorId ? { soundSensorId: hit.soundSensorId } : {}) };
   room.shotImpacts.push(impact);
   pushEvent(room, { type: "shot", tick: room.tick, impact });
 
@@ -259,16 +409,36 @@ function resolveShot(room: RoomState, shooterId: PlayerId): void {
     }
   } else if (hit.kind === "wall" && hit.wallId) {
     damageWall(room, hit.wallId, shooterId);
+  } else if (hit.kind === "camera" && hit.cameraId) {
+    damageCamera(room, hit.cameraId, shooterId);
+  } else if (hit.kind === "sound-sensor" && hit.soundSensorId) {
+    damageSoundSensor(room, hit.soundSensorId, shooterId);
   }
 }
 
-function resolveHitscan(room: RoomState, shooterId: PlayerId, origin: Vec2, rayEnd: Vec2): { kind: "none" | "player" | "wall"; end: Vec2; targetId?: PlayerId; wallId?: string } {
+function resolveHitscan(room: RoomState, shooterId: PlayerId, origin: Vec2, rayEnd: Vec2): { kind: ShotImpact["hit"]; end: Vec2; targetId?: PlayerId; wallId?: string; cameraId?: string; soundSensorId?: string } {
   const direction = normalize({ x: rayEnd.x - origin.x, y: rayEnd.y - origin.y });
-  let nearest: { kind: "none" | "player" | "wall"; distance: number; end: Vec2; targetId?: PlayerId; wallId?: string } = { kind: "none", distance: FIRE_RANGE, end: rayEnd };
+  let nearest: { kind: ShotImpact["hit"]; distance: number; end: Vec2; targetId?: PlayerId; wallId?: string; cameraId?: string; soundSensorId?: string } = { kind: "none", distance: FIRE_RANGE, end: rayEnd };
   const targetId: PlayerId = shooterId === "p1" ? "p2" : "p1";
   const target = room.players[targetId];
   const playerDistance = target.alive ? rayCircleDistance(origin, direction, target.position, PLAYER_RADIUS) : null;
   if (playerDistance !== null) nearest = { kind: "player", distance: playerDistance, end: add(origin, mul(direction, playerDistance)), targetId };
+
+  for (const camera of room.deployedCameras) {
+    if (camera.destroyed) continue;
+    const cameraDistance = rayCircleDistance(origin, direction, camera.position, CAMERA_HIT_RADIUS);
+    if (cameraDistance !== null && cameraDistance < nearest.distance) {
+      nearest = { kind: "camera", distance: cameraDistance, end: add(origin, mul(direction, cameraDistance)), cameraId: camera.id };
+    }
+  }
+
+  for (const sensor of room.soundSensors) {
+    if (sensor.destroyed) continue;
+    const sensorDistance = rayCircleDistance(origin, direction, sensor.position, SOUND_SENSOR_HIT_RADIUS);
+    if (sensorDistance !== null && sensorDistance < nearest.distance) {
+      nearest = { kind: "sound-sensor", distance: sensorDistance, end: add(origin, mul(direction, sensorDistance)), soundSensorId: sensor.id };
+    }
+  }
 
   for (const wall of room.map.walls) {
     if (wall.destroyed) continue;
@@ -298,8 +468,26 @@ function damageWall(room: RoomState, wallId: string, shooterId: PlayerId): void 
   wall.hp = Math.max(0, (wall.hp ?? wall.maxHp ?? 1) - 1);
   if (wall.hp <= 0) {
     wall.destroyed = true;
+    room.slots[shooterId].lastSeenWalls.set(wall.id, structuredClone(wall));
     pushEvent(room, { type: "wall-destroyed", tick: room.tick, wallId: wall.id, playerId: shooterId });
   }
+}
+
+function damageCamera(room: RoomState, cameraId: string, shooterId: PlayerId): void {
+  const camera = room.deployedCameras.find((candidate) => candidate.id === cameraId);
+  if (!camera || camera.destroyed) return;
+  camera.hp = 0;
+  camera.destroyed = true;
+  room.slots[shooterId].lastSeenCameras.set(camera.id, structuredClone(camera));
+  room.slots[camera.owner].lastSeenCameras.set(camera.id, structuredClone(camera));
+  pushEvent(room, { type: "camera-destroyed", tick: room.tick, playerId: shooterId, cameraId: camera.id });
+}
+
+function damageSoundSensor(room: RoomState, sensorId: string, _shooterId: PlayerId): void {
+  const sensor = room.soundSensors.find((candidate) => candidate.id === sensorId);
+  if (!sensor || sensor.destroyed) return;
+  sensor.hp = 0;
+  sensor.destroyed = true;
 }
 
 function finishRound(room: RoomState, winner: PlayerId | "draw", reason: "kill" | "timer"): void {
@@ -317,7 +505,18 @@ function finishRound(room: RoomState, winner: PlayerId | "draw", reason: "kill" 
   room.round.nextRoundStartsAtTick = room.tick + ROUND_COUNTDOWN_TICKS;
   room.round.startsAtTick = room.round.nextRoundStartsAtTick;
   room.round.endsAtTick = room.round.startsAtTick + ROUND_TICKS;
+  resetRoundWorld(room);
   resetPlayersForRound(room);
+}
+
+function resetRoundWorld(room: RoomState): void {
+  room.map = initializeRuntimeMap(structuredClone(room.baseMap));
+  room.detections = [];
+  room.shotImpacts = [];
+  room.deployedCameras = [];
+  room.molotovs = [];
+  room.smokes = [];
+  room.soundSensors = [];
 }
 
 function resetPlayersForRound(room: RoomState): void {
@@ -328,18 +527,73 @@ function resetPlayersForRound(room: RoomState): void {
     player.aim = spawn.angle;
     player.alive = true;
     player.hp = PLAYER_MAX_HP;
-    room.slots[player.id].lastCommand = { type: "command", seq: 0, tick: room.tick, move: { x: 0, y: 0 }, aim: spawn.angle, fire: false, use: "none" };
+    player.ammo = MAG_SIZE;
+    player.magSize = MAG_SIZE;
+    player.isReloading = false;
+    player.walking = false;
+    delete player.reloadEndsAtTick;
+    player.gadgets = { ...GADGET_LOADOUT };
+    room.slots[player.id].lastCommand = { type: "command", seq: 0, tick: room.tick, move: { x: 0, y: 0 }, aim: spawn.angle, fire: false, use: "none", walk: false };
     room.slots[player.id].nextFireTick = room.tick;
+    room.slots[player.id].nextActionTick = room.tick;
+    room.slots[player.id].lastGadgetSeq = 0;
+    room.slots[player.id].lastSeenWalls.clear();
+    room.slots[player.id].lastSeenCameras.clear();
   }
 }
 
 function resetMatch(room: RoomState): void {
   room.tick = 0;
-  room.map = initializeRuntimeMap(structuredClone(room.baseMap));
   room.round = { phase: "countdown", roundNumber: 1, scores: { p1: 0, p2: 0 }, startsAtTick: ROUND_COUNTDOWN_TICKS, endsAtTick: ROUND_COUNTDOWN_TICKS + ROUND_TICKS };
   room.rematchRequests.clear();
-  room.shotImpacts = [];
+  resetRoundWorld(room);
   resetPlayersForRound(room);
+}
+
+export function isExpiredUnfilledLobby(room: RoomState, nowMs = Date.now()): boolean {
+  const connected = Object.values(room.slots).filter((slot) => slot.connected).length;
+  return room.round.phase === "lobby" && connected < 2 && nowMs - room.createdAtMs >= 60_000;
+}
+
+function resolveMolotovDamage(room: RoomState): void {
+  for (const zone of room.molotovs) {
+    const age = room.tick - zone.createdAtTick;
+    if (age <= 0 || age % MOLOTOV_DAMAGE_INTERVAL !== 0) continue;
+    for (const player of Object.values(room.players)) {
+      if (!player.alive || distance(player.position, zone.position) > zone.radius) continue;
+      if (!hasLineOfSight(room.map, zone.position, player.position)) continue;
+      player.hp = Math.max(0, player.hp - 1);
+      if (player.hp <= 0) {
+        player.alive = false;
+        pushEvent(room, { type: "kill", tick: room.tick, shooter: zone.owner, target: player.id });
+        finishRound(room, zone.owner, "kill");
+        return;
+      }
+    }
+  }
+}
+
+function resolveSoundSensors(room: RoomState): void {
+  for (const sensor of room.soundSensors) {
+    if (sensor.destroyed) continue;
+    const target = room.players[sensor.owner === "p1" ? "p2" : "p1"];
+    const speed = Math.hypot(target.velocity.x, target.velocity.y);
+    const triggered = target.alive && !target.walking && speed >= SOUND_SENSOR_SPEED_THRESHOLD && distance(sensor.position, target.position) <= sensor.radius;
+    if (!triggered) continue;
+    sensor.triggeredUntilTick = room.tick + SOUND_SENSOR_TRIGGER_TICKS;
+    const detection: Detection = {
+      id: `${sensor.id}-${room.tick}`,
+      kind: "sound-area",
+      position: { ...sensor.position },
+      radius: sensor.radius,
+      confidence: 0.72,
+      expiresAtTick: room.tick + SOUND_SENSOR_TRIGGER_TICKS,
+      owner: sensor.owner,
+      targetId: target.id
+    };
+    room.detections.push(detection);
+    pushEvent(room, { type: "sensor-detect", tick: room.tick, sensorId: sensor.id, target: target.id, confidence: detection.confidence });
+  }
 }
 
 function breachNearestWall(room: RoomState, player: PlayerState): void {
@@ -359,8 +613,8 @@ function resolveSensors(room: RoomState): void {
     const target = room.players[sensor.owner === "p1" ? "p2" : "p1"];
     if (!target.alive) continue;
     const seesTarget = sensor.kind === "camera"
-      ? pointInCone(sensor.position, sensor.angle, sensor.fov, sensor.range, target.position) && hasLineOfSight(room.map, sensor.position, target.position)
-      : distance(sensor.position, target.position) <= sensor.range && hasLineOfSight(room.map, sensor.position, target.position) && room.tick % 20 === 0;
+      ? pointInCone(sensor.position, sensor.angle, sensor.fov, sensor.range, target.position) && hasLineOfSightWithSmoke(room.map, room.smokes, sensor.position, target.position)
+      : distance(sensor.position, target.position) <= sensor.range && hasLineOfSightWithSmoke(room.map, room.smokes, sensor.position, target.position) && room.tick % 20 === 0;
     if (!seesTarget) continue;
     const confidence = sensor.kind === "camera" ? 0.82 : 0.55;
     const noise = sensor.kind === "motion" ? Math.sin(room.tick * 12.9898) * 18 : 0;
@@ -372,15 +626,25 @@ function resolveSensors(room: RoomState): void {
 
 export function snapshotFor(room: RoomState, playerId: PlayerId): ServerSnapshot {
   const self = room.players[playerId];
+  completeReload(self, room.tick);
   const opponentId: PlayerId = playerId === "p1" ? "p2" : "p1";
   const opponent = room.players[opponentId];
+  const debug = room.slots[playerId].debug;
   const visiblePlayers: PlayerState[] = [];
-  if (opponent.alive && hasLineOfSight(room.map, self.position, opponent.position) && distance(self.position, opponent.position) <= VIEW_RANGE) {
+  if (opponent.alive && isPointVisibleToPlayer(room, self, opponent.position)) {
     visiblePlayers.push({ ...opponent, position: { ...opponent.position }, velocity: { ...opponent.velocity } });
   }
-  const polygon = visiblePolygon(room.map, self.position, VIEW_RANGE, 80);
+  const polygon = visibleConePolygonWithSmoke(room.map, room.smokes, self.position, self.aim, VIEW_FOV, VIEW_RANGE, 54);
   room.slots[playerId].explored.push(...polygon.filter((_, index) => index % 8 === 0));
   room.slots[playerId].explored = room.slots[playerId].explored.slice(-400);
+  const visibleShotImpacts = room.shotImpacts.filter((impact) => {
+    if (impact.shooter === playerId) return true;
+    return isPointVisibleToPlayer(room, self, impact.origin) || isPointVisibleToPlayer(room, self, impact.end);
+  });
+  const visibleCameras = visibleCamerasFor(room, playerId);
+  const visibleMolotovs = room.molotovs.filter((zone) => zone.owner === playerId || isPointVisibleToPlayer(room, self, zone.position));
+  const visibleSmokes = room.smokes.filter((zone) => zone.owner === playerId || isPointVisibleToPlayer(room, self, zone.position));
+  const visibleSoundSensors = room.soundSensors.filter((zone) => !zone.destroyed && (zone.owner === playerId || isPointVisibleToPlayer(room, self, zone.position)));
 
   const snapshot: ServerSnapshot = {
     type: "snapshot",
@@ -389,17 +653,69 @@ export function snapshotFor(room: RoomState, playerId: PlayerId): ServerSnapshot
     round: { ...room.round, scores: { ...room.round.scores } },
     self: { ...self, position: { ...self.position }, velocity: { ...self.velocity } },
     visiblePlayers,
-    detections: room.detections,
-    map: { walls: room.map.walls, sensors: room.map.sensors },
-    shotImpacts: room.shotImpacts,
+    detections: debug ? room.detections : room.detections.filter((detection) => detection.owner === playerId || isPointVisibleToPlayer(room, self, detection.position)),
+    map: { walls: debug ? room.map.walls : wallsForPlayer(room, playerId), sensors: debug ? room.map.sensors : [] },
+    gadgets: { cameras: visibleCameras, molotovs: visibleMolotovs, smokes: visibleSmokes, soundSensors: visibleSoundSensors },
+    shotImpacts: visibleShotImpacts,
     visiblePolygon: polygon,
+    visibleCircles: room.deployedCameras.filter((camera) => camera.owner === playerId && !camera.destroyed).map((camera) => ({ position: camera.position, radius: camera.radius })),
     explored: room.slots[playerId].explored
   };
 
-  if (room.slots[playerId].debug) {
-    snapshot.debug = { players: Object.values(room.players), detections: room.detections, visibleByPlayer: { p1: visiblePolygon(room.map, room.players.p1.position, VIEW_RANGE, 48), p2: visiblePolygon(room.map, room.players.p2.position, VIEW_RANGE, 48) } };
+  if (debug) {
+    snapshot.debug = {
+      players: Object.values(room.players),
+      detections: room.detections,
+      visibleByPlayer: {
+        p1: visibleConePolygonWithSmoke(room.map, room.smokes, room.players.p1.position, room.players.p1.aim, VIEW_FOV, VIEW_RANGE, 48),
+        p2: visibleConePolygonWithSmoke(room.map, room.smokes, room.players.p2.position, room.players.p2.aim, VIEW_FOV, VIEW_RANGE, 48)
+      }
+    };
   }
   return snapshot;
+}
+
+function isPointVisibleToPlayer(room: RoomState, player: PlayerState, point: Vec2): boolean {
+  if (hasConeLineOfSightWithSmoke(room.map, room.smokes, player.position, player.aim, VIEW_FOV, VIEW_RANGE, point)) return true;
+  return room.deployedCameras.some((camera) => camera.owner === player.id && !camera.destroyed && distance(camera.position, point) <= camera.radius && hasLineOfSightWithSmoke(room.map, room.smokes, camera.position, point));
+}
+
+function wallVisibleToPlayer(room: RoomState, player: PlayerState, wall: Wall): boolean {
+  const midpoint = { x: (wall.a.x + wall.b.x) / 2, y: (wall.a.y + wall.b.y) / 2 };
+  return isPointVisibleToPlayer(room, player, wall.a) || isPointVisibleToPlayer(room, player, wall.b) || isPointVisibleToPlayer(room, player, midpoint);
+}
+
+function wallsForPlayer(room: RoomState, playerId: PlayerId): Wall[] {
+  const player = room.players[playerId];
+  const slot = room.slots[playerId];
+  return room.map.walls.flatMap((wall) => {
+    if (wallVisibleToPlayer(room, player, wall)) {
+      const clone = structuredClone(wall);
+      slot.lastSeenWalls.set(wall.id, clone);
+      return [clone];
+    }
+    const lastSeen = slot.lastSeenWalls.get(wall.id);
+    if (lastSeen) return [structuredClone(lastSeen)];
+    const authored = room.baseMap.walls.find((candidate) => candidate.id === wall.id);
+    return authored ? [structuredClone(authored)] : [];
+  });
+}
+
+function visibleCamerasFor(room: RoomState, playerId: PlayerId): DeployedCamera[] {
+  const player = room.players[playerId];
+  const slot = room.slots[playerId];
+  const visible: DeployedCamera[] = [];
+  for (const camera of room.deployedCameras) {
+    if (camera.owner === playerId || isPointVisibleToPlayer(room, player, camera.position)) {
+      const clone = structuredClone(camera);
+      slot.lastSeenCameras.set(camera.id, clone);
+      visible.push(clone);
+      continue;
+    }
+    const lastSeen = slot.lastSeenCameras.get(camera.id);
+    if (lastSeen) visible.push(structuredClone(lastSeen));
+  }
+  return visible;
 }
 
 function pushEvent(room: RoomState, event: AuthoritativeEvent): void {

@@ -1,9 +1,10 @@
 export type Team = "blue" | "orange";
 export type PlayerId = "p1" | "p2";
 export type RoundPhase = "lobby" | "countdown" | "active" | "ended";
-export type SensorKind = "camera" | "motion";
+export type SensorKind = "camera" | "motion" | "sound";
 export type UtilityKind = "emp" | "breach" | "fake-noise" | "smoke" | "flash" | "signal-spoof";
 export type WallKind = "solid" | "transparent" | "door" | "mesh";
+export type GadgetKind = "camera" | "molotov" | "smoke" | "wall" | "sound";
 
 export interface Vec2 {
   x: number;
@@ -98,6 +99,11 @@ export interface PlayerCommand {
   aim: number;
   fire: boolean;
   use: "none" | "breach";
+  reload?: boolean;
+  gadget?: "none" | GadgetKind;
+  gadgetTarget?: Vec2;
+  gadgetAngle?: number;
+  walk?: boolean;
 }
 
 export interface PlayerState {
@@ -108,14 +114,22 @@ export interface PlayerState {
   aim: number;
   alive: boolean;
   hp: number;
+  ammo: number;
+  magSize: number;
+  isReloading: boolean;
+  reloadEndsAtTick?: number;
+  gadgets: Record<GadgetKind, number>;
+  walking?: boolean;
 }
 
 export interface Detection {
   id: string;
-  kind: SensorKind | "los" | "motion-pulse";
+  kind: SensorKind | "los" | "motion-pulse" | "sound-area";
   position: Vec2;
+  radius?: number;
   confidence: number;
   expiresAtTick: number;
+  owner?: PlayerId;
   targetId?: PlayerId;
 }
 
@@ -131,10 +145,22 @@ export interface ServerSnapshot {
     walls: Wall[];
     sensors: SensorDefinition[];
   };
+  gadgets: {
+    cameras: DeployedCamera[];
+    molotovs: MolotovZone[];
+    smokes: SmokeZone[];
+    soundSensors: SoundSensorZone[];
+  };
   shotImpacts: ShotImpact[];
   visiblePolygon: Vec2[];
+  visibleCircles: VisionCircle[];
   explored: Vec2[];
   debug?: DebugTruth;
+}
+
+export interface VisionCircle {
+  position: Vec2;
+  radius: number;
 }
 
 export interface DebugTruth {
@@ -161,9 +187,50 @@ export interface ShotImpact {
   shooter: PlayerId;
   origin: Vec2;
   end: Vec2;
-  hit: "none" | "player" | "wall";
+  hit: "none" | "player" | "wall" | "camera" | "sound-sensor";
   targetId?: PlayerId;
   wallId?: string;
+  cameraId?: string;
+  soundSensorId?: string;
+}
+
+export interface DeployedCamera {
+  id: string;
+  owner: PlayerId;
+  position: Vec2;
+  radius: number;
+  hp: number;
+  destroyed?: boolean;
+}
+
+export interface MolotovZone {
+  id: string;
+  owner: PlayerId;
+  position: Vec2;
+  radius: number;
+  createdAtTick: number;
+  expiresAtTick: number;
+}
+
+export interface SmokeZone {
+  id: string;
+  owner: PlayerId;
+  position: Vec2;
+  radius: number;
+  createdAtTick: number;
+  expiresAtTick: number;
+}
+
+export interface SoundSensorZone {
+  id: string;
+  owner: PlayerId;
+  position: Vec2;
+  radius: number;
+  hp: number;
+  createdAtTick: number;
+  expiresAtTick?: number;
+  triggeredUntilTick?: number;
+  destroyed?: boolean;
 }
 
 export type AuthoritativeEvent =
@@ -173,6 +240,12 @@ export type AuthoritativeEvent =
   | { type: "kill"; tick: number; shooter: PlayerId; target: PlayerId }
   | { type: "sensor-detect"; tick: number; sensorId: string; target: PlayerId; confidence: number }
   | { type: "wall-destroyed"; tick: number; wallId: string; playerId: PlayerId }
+  | { type: "camera-deployed"; tick: number; playerId: PlayerId; cameraId: string }
+  | { type: "camera-destroyed"; tick: number; playerId: PlayerId; cameraId: string }
+  | { type: "molotov-deployed"; tick: number; playerId: PlayerId; molotovId: string }
+  | { type: "smoke-deployed"; tick: number; playerId: PlayerId; smokeId: string }
+  | { type: "deployable-wall-deployed"; tick: number; playerId: PlayerId; wallId: string }
+  | { type: "sound-sensor-deployed"; tick: number; playerId: PlayerId; sensorId: string }
   | { type: "round-end"; tick: number; winner: PlayerId | "draw"; reason: "kill" | "timer" };
 
 export interface ReplayLog {
