@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { createWall, type MapDefinition } from "@tac/shared";
+import { createWall, distanceToSegment, type MapDefinition } from "@tac/shared";
 import { applyClientMessage, createRoom, isExpiredUnfilledLobby, joinRoom, snapshotFor, stepRoom } from "../src/sim.js";
 
 describe("authoritative simulation", () => {
@@ -115,6 +115,33 @@ describe("authoritative simulation", () => {
     applyClientMessage(room, "p1", { type: "command", seq: 1, tick: room.tick, move: { x: -1, y: 0 }, aim: Math.PI, fire: false, use: "none" });
     for (let i = 0; i < 8; i += 1) stepRoom(room);
     expect(door.angularVelocity ?? 0).toBeGreaterThan(0);
+  });
+
+  it("does not violently reverse doors from one tick of opposite contact", () => {
+    const map = testMap();
+    map.walls.push(createWall("tap-door", "door", { x: 120, y: 90 }, { x: 120, y: 150 }, 8));
+    const room = activeRoom(map);
+    const door = room.map.walls.find((wall) => wall.id === "tap-door")!;
+    door.currentAngle = -0.7;
+    door.angularVelocity = -0.04;
+    door.a = door.hinge!;
+    door.b = { x: 120 + Math.sin(0.7) * 60, y: 90 + Math.cos(0.7) * 60 };
+    room.players.p1.position = { x: 165, y: 135 };
+    applyClientMessage(room, "p1", { type: "command", seq: 1, tick: room.tick, move: { x: -1, y: 0 }, aim: Math.PI, fire: false, use: "none" });
+    stepRoom(room);
+    expect(Math.abs(door.angularVelocity ?? 0)).toBeLessThanOrEqual(0.06);
+    expect(door.angularVelocity ?? 0).toBeLessThanOrEqual(0);
+  });
+
+  it("keeps players outside the current door panel while pushing", () => {
+    const map = testMap();
+    map.walls.push(createWall("solid-door", "door", { x: 150, y: 90 }, { x: 150, y: 150 }, 8));
+    const room = activeRoom(map);
+    room.players.p1.position = { x: 139, y: 120 };
+    applyClientMessage(room, "p1", { type: "command", seq: 1, tick: room.tick, move: { x: 1, y: 0 }, aim: 0, fire: false, use: "none" });
+    for (let i = 0; i < 6; i += 1) stepRoom(room);
+    const door = room.map.walls.find((wall) => wall.id === "solid-door")!;
+    expect(distanceToSegment(room.players.p1.position, door.a, door.b)).toBeGreaterThanOrEqual(10 + door.thickness / 2);
   });
 
   it("damps doors back toward closed after push input stops", () => {

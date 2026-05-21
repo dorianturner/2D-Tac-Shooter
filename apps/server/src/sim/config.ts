@@ -46,6 +46,7 @@ export const DOOR_DAMPING = 0.68;
 export const DOOR_PUSH_STRENGTH = 0.034;
 export const DOOR_RETURN_STRENGTH = 0.0014;
 export const DOOR_MAX_ANGULAR_SPEED = 0.06;
+export const DOOR_MAX_ANGULAR_ACCELERATION = 0.018;
 export const DOOR_COLLISION_SUBSTEPS = 6;
 export const DOOR_PUSH_SKIN = 11;
 export const DOOR_COLLISION_SKIN = 0.75;

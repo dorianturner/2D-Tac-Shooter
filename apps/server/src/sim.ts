@@ -38,6 +38,7 @@ import {
   DEPLOYABLE_WALL_RANGE,
   DOOR_DAMPING,
   DOOR_MAX_ANGLE,
+  DOOR_MAX_ANGULAR_ACCELERATION,
   DOOR_MAX_ANGULAR_SPEED,
   DOOR_PUSH_SKIN,
   DOOR_PUSH_STRENGTH,
@@ -311,6 +312,7 @@ export function stepRoom(room: RoomState): void {
     room.analytics.push({ type: "movement-sample", tick: room.tick, data: { playerId: player.id, position: player.position } });
   }
   integrateDoors(room);
+  resolvePlayerDoorOverlaps(room);
 
   resolveSensors(room);
   resolveSoundSensors(room);
@@ -337,6 +339,8 @@ export function initializeRuntimeMap(map: MapDefinition): MapDefinition {
         currentAngle: withHp.currentAngle ?? 0,
         angularVelocity: withHp.angularVelocity ?? 0,
         lastPushTick: withHp.lastPushTick ?? 0,
+        pushContactTicks: withHp.pushContactTicks ?? 0,
+        lastPushSign: withHp.lastPushSign ?? 0,
         blockedUntilTick: withHp.blockedUntilTick ?? 0,
         blocksMovement: true,
         blocksVision: true,
@@ -378,8 +382,12 @@ function collectDoorPushes(room: RoomState, current: Vec2, desired: Vec2, delta:
     const panelLength = Math.max(1, distance(door.hinge, door.b));
     const normalizedTorque = Math.max(-1, Math.min(1, torque / Math.max(1, panelLength * moveDistance)));
     const closeness = Math.max(0.35, 1 - Math.min(currentDistance, desiredDistance) / Math.max(1, threshold));
-    const reversing = Math.sign(normalizedTorque) !== 0 && Math.sign(door.angularVelocity ?? 0) === -Math.sign(normalizedTorque);
-    const impulse = normalizedTorque * DOOR_PUSH_STRENGTH * closeness * (reversing ? 1.35 : 1);
+    const pushSign = Math.sign(normalizedTorque);
+    door.pushContactTicks = door.lastPushSign === pushSign && room.tick - (door.lastPushTick ?? -9999) <= 1 ? (door.pushContactTicks ?? 0) + 1 : 1;
+    door.lastPushSign = pushSign;
+    const contactScale = door.pushContactTicks >= 2 ? 1 : 0.35;
+    const rawImpulse = normalizedTorque * DOOR_PUSH_STRENGTH * closeness * contactScale;
+    const impulse = Math.max(-DOOR_MAX_ANGULAR_ACCELERATION, Math.min(DOOR_MAX_ANGULAR_ACCELERATION, rawImpulse));
     door.angularVelocity = clampDoorSpeed((door.angularVelocity ?? 0) + impulse);
     door.targetAngle = Math.max(-DOOR_MAX_ANGLE, Math.min(DOOR_MAX_ANGLE, (door.currentAngle ?? 0) + impulse * 7));
     door.lastPushTick = room.tick;
@@ -455,6 +463,29 @@ function integrateDoors(room: RoomState): void {
     }
     door.angularVelocity = (door.angularVelocity ?? 0) * DOOR_DAMPING;
     if (Math.abs(door.angularVelocity) < 0.0005) door.angularVelocity = 0;
+  }
+}
+
+function resolvePlayerDoorOverlaps(room: RoomState): void {
+  for (const player of Object.values(room.players)) {
+    if (!player.alive) continue;
+    let position = player.position;
+    for (const door of room.map.walls) {
+      if (door.kind !== "door" || door.destroyed || !door.blocksMovement) continue;
+      const threshold = PLAYER_RADIUS + door.thickness / 2 + DOOR_COLLISION_SKIN;
+      const closest = closestPointOnSegment(position, door.a, door.b);
+      const separation = { x: position.x - closest.x, y: position.y - closest.y };
+      const separationDistance = Math.hypot(separation.x, separation.y);
+      if (separationDistance >= threshold) continue;
+      const normal = separationDistance > 0.0001 ? { x: separation.x / separationDistance, y: separation.y / separationDistance } : normalFromSegmentToPoint(position, door.a, door.b);
+      const push = threshold - separationDistance + 0.01;
+      position = {
+        x: Math.max(PLAYER_RADIUS, Math.min(room.map.bounds.width - PLAYER_RADIUS, position.x + normal.x * push)),
+        y: Math.max(PLAYER_RADIUS, Math.min(room.map.bounds.height - PLAYER_RADIUS, position.y + normal.y * push))
+      };
+    }
+    player.velocity = { x: player.velocity.x + position.x - player.position.x, y: player.velocity.y + position.y - player.position.y };
+    player.position = position;
   }
 }
 

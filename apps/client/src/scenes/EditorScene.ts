@@ -117,7 +117,7 @@ export class EditorScene extends Phaser.Scene {
           <button data-action="load">Load</button>
         </div>
         <div class="tool-grid"></div>
-        <p class="editor-hint">Wheel zooms. Middle-drag pans. Shift-click adds to selection. Drag empty space to box-select. Delete removes selected geometry.</p>
+        <p class="editor-hint">Wheel zooms. Middle-drag or Alt-drag pans. Shift-click adds to selection. Drag empty space to box-select. Delete removes selected geometry.</p>
       </aside>
       <aside class="editor-right">
         <h2>Map Settings</h2>
@@ -146,7 +146,7 @@ export class EditorScene extends Phaser.Scene {
   }
 
   private onPointerDown(pointer: Phaser.Input.Pointer): void {
-    if (isMiddleMouse(pointer.event)) {
+    if (isMiddleMouse(pointer.event) || isAltLeftMouse(pointer.event)) {
       pointer.event.preventDefault();
       this.drag = { type: "pan", previous: { x: pointer.x, y: pointer.y } };
       return;
@@ -700,6 +700,10 @@ function normalizeMap(map: MapDefinition): MapDefinition {
 
 function isMiddleMouse(event: MouseEvent | TouchEvent | WheelEvent): event is MouseEvent {
   return "button" in event && event.button === 1;
+}
+
+function isAltLeftMouse(event: MouseEvent | TouchEvent | WheelEvent): event is MouseEvent {
+  return "button" in event && event.button === 0 && event.altKey;
 }
 
 function createBlankMap(): MapDefinition {

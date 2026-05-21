@@ -25,6 +25,8 @@ export interface Wall {
   currentAngle?: number;
   angularVelocity?: number;
   lastPushTick?: number;
+  pushContactTicks?: number;
+  lastPushSign?: number;
   blockedUntilTick?: number;
   a: Vec2;
   b: Vec2;
