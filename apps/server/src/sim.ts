@@ -34,11 +34,12 @@ import {
   CAMERA_RANGE,
   CAMERA_RADIUS,
   DOOR_COLLISION_SUBSTEPS,
+  DOOR_COLLISION_SKIN,
   DEPLOYABLE_WALL_RANGE,
   DOOR_DAMPING,
   DOOR_MAX_ANGLE,
   DOOR_MAX_ANGULAR_SPEED,
-  DOOR_PLAYER_SKIN,
+  DOOR_PUSH_SKIN,
   DOOR_PUSH_STRENGTH,
   DOOR_RETURN_STRENGTH,
   FIRE_COOLDOWN_TICKS,
@@ -356,25 +357,29 @@ function initializeWallHp(wall: MapDefinition["walls"][number]): MapDefinition["
 }
 
 function collectDoorPushes(room: RoomState, current: Vec2, desired: Vec2, delta: Vec2): void {
-  if (Math.hypot(delta.x, delta.y) < 0.01) return;
+  const moveDistance = Math.hypot(delta.x, delta.y);
+  if (moveDistance < 0.01) return;
   for (const door of room.map.walls) {
     if (door.kind !== "door" || !door.hinge || door.destroyed) continue;
-    const threshold = PLAYER_RADIUS + door.thickness / 2 + DOOR_PLAYER_SKIN;
+    const threshold = PLAYER_RADIUS + door.thickness / 2 + DOOR_PUSH_SKIN;
     const currentDistance = distanceToSegment(current, door.a, door.b);
     const desiredDistance = distanceToSegment(desired, door.a, door.b);
-    const contactForgiveness = 7;
-    const contact = currentDistance <= threshold + contactForgiveness
-      || desiredDistance <= threshold + contactForgiveness
-      || Boolean(lineIntersection(current, desired, door.a, door.b));
+    const contact = currentDistance <= threshold || desiredDistance <= threshold || Boolean(lineIntersection(current, desired, door.a, door.b));
     if (!contact) continue;
-    const panel = { x: door.b.x - door.hinge.x, y: door.b.y - door.hinge.y };
-    const fromHinge = { x: current.x - door.hinge.x, y: current.y - door.hinge.y };
-    const side = cross(panel, fromHinge);
-    const fallback = cross(panel, delta);
-    const sideSign = Math.sign(side || fallback || 1);
-    const closingAgainstPush = Math.sign(door.currentAngle ?? 0) === sideSign;
-    const closeness = Math.max(0.45, 1 - Math.min(currentDistance, desiredDistance) / Math.max(1, threshold + contactForgiveness));
-    const impulse = -sideSign * DOOR_PUSH_STRENGTH * closeness * (closingAgainstPush ? 1.45 : 1);
+    const reference = desiredDistance <= currentDistance ? desired : current;
+    const closest = closestPointOnSegment(reference, door.a, door.b);
+    const awayFromPanel = normalFromSegmentToPoint(reference, door.a, door.b);
+    const pushIntoPanel = -(delta.x * awayFromPanel.x + delta.y * awayFromPanel.y);
+    const crossingPanel = Boolean(lineIntersection(current, desired, door.a, door.b));
+    if (pushIntoPanel <= 0.01 && !crossingPanel) continue;
+    const hingeToContact = { x: closest.x - door.hinge.x, y: closest.y - door.hinge.y };
+    const torque = cross(hingeToContact, delta);
+    if (Math.abs(torque) < 0.001) continue;
+    const panelLength = Math.max(1, distance(door.hinge, door.b));
+    const normalizedTorque = Math.max(-1, Math.min(1, torque / Math.max(1, panelLength * moveDistance)));
+    const closeness = Math.max(0.35, 1 - Math.min(currentDistance, desiredDistance) / Math.max(1, threshold));
+    const reversing = Math.sign(normalizedTorque) !== 0 && Math.sign(door.angularVelocity ?? 0) === -Math.sign(normalizedTorque);
+    const impulse = normalizedTorque * DOOR_PUSH_STRENGTH * closeness * (reversing ? 1.35 : 1);
     door.angularVelocity = clampDoorSpeed((door.angularVelocity ?? 0) + impulse);
     door.targetAngle = Math.max(-DOOR_MAX_ANGLE, Math.min(DOOR_MAX_ANGLE, (door.currentAngle ?? 0) + impulse * 7));
     door.lastPushTick = room.tick;
@@ -398,21 +403,27 @@ function movePlayerWithSweptCollision(map: MapDefinition, current: Vec2, desired
 }
 
 function moveWithCapsuleCollision(map: MapDefinition, current: Vec2, desired: Vec2, radius: number): Vec2 {
-  const clamped = {
+  let resolved = {
     x: Math.max(radius, Math.min(map.bounds.width - radius, desired.x)),
     y: Math.max(radius, Math.min(map.bounds.height - radius, desired.y))
   };
   for (const wall of map.walls) {
     if (!wall.blocksMovement || wall.destroyed) continue;
-    const threshold = radius + wall.thickness / 2 + (wall.kind === "door" ? DOOR_PLAYER_SKIN : 0);
-    if (distanceToSegment(clamped, wall.a, wall.b) >= threshold && !lineIntersection(current, clamped, wall.a, wall.b)) continue;
-    const slideX = { x: clamped.x, y: current.y };
-    const slideY = { x: current.x, y: clamped.y };
-    if (distanceToSegment(slideX, wall.a, wall.b) >= threshold && !lineIntersection(current, slideX, wall.a, wall.b)) return slideX;
-    if (distanceToSegment(slideY, wall.a, wall.b) >= threshold && !lineIntersection(current, slideY, wall.a, wall.b)) return slideY;
-    return current;
+    const threshold = radius + wall.thickness / 2 + (wall.kind === "door" ? DOOR_COLLISION_SKIN : 0);
+    const closest = closestPointOnSegment(resolved, wall.a, wall.b);
+    const separation = { x: resolved.x - closest.x, y: resolved.y - closest.y };
+    const separationDistance = Math.hypot(separation.x, separation.y);
+    const crossed = lineIntersection(current, resolved, wall.a, wall.b);
+    if (separationDistance >= threshold && (!crossed || wall.kind === "door")) continue;
+    const normal = separationDistance > 0.0001 ? { x: separation.x / separationDistance, y: separation.y / separationDistance } : normalFromSegmentToPoint(current, wall.a, wall.b);
+    const overlap = separationDistance < threshold ? threshold - separationDistance : 0;
+    if (overlap <= 0 && wall.kind === "door") continue;
+    resolved = {
+      x: Math.max(radius, Math.min(map.bounds.width - radius, resolved.x + normal.x * (overlap + 0.01))),
+      y: Math.max(radius, Math.min(map.bounds.height - radius, resolved.y + normal.y * (overlap + 0.01)))
+    };
   }
-  return clamped;
+  return resolved;
 }
 
 function integrateDoors(room: RoomState): void {
@@ -466,6 +477,23 @@ function wallSharesDoorFramePoint(door: MapDefinition["walls"][number], wall: Ma
 function segmentsOverlapWithThickness(a: Vec2, b: Vec2, c: Vec2, d: Vec2, threshold: number): boolean {
   if (lineIntersection(a, b, c, d)) return true;
   return distanceToSegment(a, c, d) < threshold || distanceToSegment(b, c, d) < threshold || distanceToSegment(c, a, b) < threshold || distanceToSegment(d, a, b) < threshold;
+}
+
+function closestPointOnSegment(point: Vec2, a: Vec2, b: Vec2): Vec2 {
+  const ab = { x: b.x - a.x, y: b.y - a.y };
+  const lengthSq = ab.x * ab.x + ab.y * ab.y;
+  if (lengthSq <= 0.000001) return { ...a };
+  const t = Math.max(0, Math.min(1, ((point.x - a.x) * ab.x + (point.y - a.y) * ab.y) / lengthSq));
+  return { x: a.x + ab.x * t, y: a.y + ab.y * t };
+}
+
+function normalFromSegmentToPoint(point: Vec2, a: Vec2, b: Vec2): Vec2 {
+  const closest = closestPointOnSegment(point, a, b);
+  const delta = { x: point.x - closest.x, y: point.y - closest.y };
+  const length = Math.hypot(delta.x, delta.y);
+  if (length > 0.0001) return { x: delta.x / length, y: delta.y / length };
+  const segment = normalize({ x: b.x - a.x, y: b.y - a.y });
+  return { x: -segment.y, y: segment.x };
 }
 
 function cross(a: Vec2, b: Vec2): number {
@@ -614,11 +642,11 @@ function resolveHitscan(room: RoomState, shooterId: PlayerId, origin: Vec2, rayE
     const hit = lineIntersection(origin, rayEnd, wall.a, wall.b);
     if (!hit) continue;
     const hitDistance = distance(origin, hit);
-    if (wall.destructible && wall.kind !== "door" && (wall.kind === "transparent" || wall.kind === "mesh")) {
+    if (wall.destructible && wall.kind === "mesh") {
       damageWall(room, wall.id, shooterId);
       continue;
     }
-    const blocksShot = wall.kind === "door" || wall.blocksVision || wall.kind === "solid";
+    const blocksShot = wall.kind === "door" || wall.kind === "transparent" || wall.blocksVision || wall.kind === "solid";
     if (blocksShot && hitDistance < nearest.distance) nearest = { kind: "wall", distance: hitDistance, end: hit, wallId: wall.id };
   }
   return nearest;

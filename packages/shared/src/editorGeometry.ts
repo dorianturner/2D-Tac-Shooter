@@ -1,4 +1,4 @@
-import { add, distance, distanceToSegment, mul, normalize, sub } from "./geometry.js";
+import { add, distance, distanceToSegment, lineIntersection, mul, normalize, sub } from "./geometry.js";
 import type { MapDefinition, Vec2, Wall, WallKind } from "./types.js";
 
 export function wallKindDefaults(kind: WallKind): Pick<Wall, "kind" | "blocksVision" | "blocksMovement" | "destructible"> {
@@ -65,6 +65,30 @@ export function insertDoorGap(walls: Wall[], wallId: string, point: Vec2, width:
   if (rightLength > minimumSegment) next.push({ ...wall, id: `${idPrefix}-right`, a: gapB });
   next.push(createWall(`${idPrefix}-door`, "door", gapA, gapB, Math.max(4, wall.thickness / 2), { label: "DOOR" }));
   return next;
+}
+
+export interface DoorSwingValidation {
+  valid: boolean;
+  blockerId?: string;
+}
+
+export function validateDoorSwing(walls: Wall[], door: Wall, maxAngle = 1.92): DoorSwingValidation {
+  if (door.kind !== "door") return { valid: true };
+  const hinge = door.hinge ?? door.closedA ?? door.a;
+  const closedB = door.closedB ?? door.b;
+  const doorHalf = door.thickness / 2;
+  const angles = [-maxAngle, -1.4, -1, -0.6, -0.25, 0.25, 0.6, 1, 1.4, maxAngle];
+
+  for (const wall of walls) {
+    if (wall.id === door.id || wall.destroyed || !wall.blocksMovement) continue;
+    if (wallSharesDoorFramePoint(hinge, closedB, doorHalf, wall)) continue;
+    for (const angle of angles) {
+      const swungB = rotateDoorEndpoint(hinge, closedB, angle);
+      if (segmentsOverlapWithThickness(hinge, swungB, wall.a, wall.b, doorHalf + wall.thickness / 2)) return { valid: false, blockerId: wall.id };
+    }
+  }
+
+  return { valid: true };
 }
 
 export function wallIntersectsRect(wall: Wall, min: Vec2, max: Vec2): boolean {
@@ -153,4 +177,20 @@ function segmentFromRange(wall: Wall, axis: "x" | "y", min: number, max: number,
 
 function pointInRect(point: Vec2, min: Vec2, max: Vec2): boolean {
   return point.x >= min.x && point.x <= max.x && point.y >= min.y && point.y <= max.y;
+}
+
+function rotateDoorEndpoint(hinge: Vec2, closedB: Vec2, angle: number): Vec2 {
+  const length = distance(hinge, closedB);
+  const base = Math.atan2(closedB.y - hinge.y, closedB.x - hinge.x);
+  return { x: hinge.x + Math.cos(base + angle) * length, y: hinge.y + Math.sin(base + angle) * length };
+}
+
+function wallSharesDoorFramePoint(hinge: Vec2, closedB: Vec2, doorHalf: number, wall: Wall): boolean {
+  const tolerance = doorHalf + wall.thickness / 2 + 2;
+  return [wall.a, wall.b].some((point) => distance(point, hinge) <= tolerance || distance(point, closedB) <= tolerance);
+}
+
+function segmentsOverlapWithThickness(a: Vec2, b: Vec2, c: Vec2, d: Vec2, threshold: number): boolean {
+  if (lineIntersection(a, b, c, d)) return true;
+  return distanceToSegment(a, c, d) < threshold || distanceToSegment(b, c, d) < threshold || distanceToSegment(c, a, b) < threshold || distanceToSegment(d, a, b) < threshold;
 }

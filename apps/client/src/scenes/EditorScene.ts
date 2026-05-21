@@ -9,6 +9,7 @@ import {
   replaceWallSection,
   slugifyMapName,
   sub,
+  validateDoorSwing,
   wallIntersectsRect,
   wallKindDefaults,
   type MapDefinition,
@@ -153,7 +154,6 @@ export class EditorScene extends Phaser.Scene {
     const point = this.worldPoint(pointer);
     this.pointerWorld = point;
     if (this.tool === "door") {
-      this.recordUndo();
       this.insertDoor(point);
       return;
     }
@@ -283,7 +283,15 @@ export class EditorScene extends Phaser.Scene {
     const wall = this.pickWall(point, true);
     if (!wall) return;
     const prefix = nextId("door", this.map.walls);
-    this.map.walls = insertDoorGap(this.map.walls, wall.id, point, this.doorWidth, prefix);
+    const nextWalls = insertDoorGap(this.map.walls, wall.id, point, this.doorWidth, prefix);
+    const door = nextWalls.find((candidate) => candidate.id === `${prefix}-door`);
+    const validation = door ? validateDoorSwing(nextWalls, door) : { valid: false };
+    if (!validation.valid) {
+      this.setStatus(`Invalid door: swing blocked by ${validation.blockerId ?? "geometry"}.`);
+      return;
+    }
+    this.recordUndo();
+    this.map.walls = nextWalls;
     this.selectedIds = new Set([`${prefix}-door`]);
     this.selectedSpawns.clear();
     this.renderChrome();
@@ -331,6 +339,7 @@ export class EditorScene extends Phaser.Scene {
     for (const wall of this.map.walls) this.drawEditorWall(wall);
     this.drawSpawns();
     this.drawCreationPreview();
+    this.drawDoorPreview();
     this.drawSelectionBox();
   }
 
@@ -389,6 +398,20 @@ export class EditorScene extends Phaser.Scene {
       this.overlay!.lineBetween(this.drag.start.x, this.drag.start.y, this.pointerWorld.x, this.pointerWorld.y);
       this.label(this.pointerWorld.x + 8, this.pointerWorld.y + 8, kindLabel(kind));
     }
+  }
+
+  private drawDoorPreview(): void {
+    if (this.tool !== "door" || this.drag.type !== "none") return;
+    const wall = this.pickWall(this.pointerWorld, true);
+    if (!wall) return;
+    const prefix = "__preview-door";
+    const nextWalls = insertDoorGap(this.map.walls, wall.id, this.pointerWorld, this.doorWidth, prefix);
+    const door = nextWalls.find((candidate) => candidate.id === `${prefix}-door`);
+    if (!door) return;
+    const validation = validateDoorSwing(nextWalls, door);
+    this.overlay!.lineStyle(3, validation.valid ? colors.sensor : colors.warning, 0.9);
+    this.overlay!.lineBetween(door.a.x, door.a.y, door.b.x, door.b.y);
+    this.label((door.a.x + door.b.x) / 2 + 8, (door.a.y + door.b.y) / 2 + 8, validation.valid ? "DOOR" : `BLOCKED: ${validation.blockerId ?? "GEOMETRY"}`);
   }
 
   private drawSelectionBox(): void {

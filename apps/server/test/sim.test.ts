@@ -102,6 +102,21 @@ describe("authoritative simulation", () => {
     expect(Math.abs(rightDoor.angularVelocity ?? 0)).toBeLessThanOrEqual(0.06);
   });
 
+  it("allows pushing an already-open door back the other way", () => {
+    const map = testMap();
+    map.walls.push(createWall("reverse-door", "door", { x: 120, y: 90 }, { x: 120, y: 150 }, 8));
+    const room = activeRoom(map);
+    const door = room.map.walls.find((wall) => wall.id === "reverse-door")!;
+    door.currentAngle = -0.7;
+    door.angularVelocity = 0;
+    door.a = door.hinge!;
+    door.b = { x: 120 + Math.sin(0.7) * 60, y: 90 + Math.cos(0.7) * 60 };
+    room.players.p1.position = { x: 165, y: 135 };
+    applyClientMessage(room, "p1", { type: "command", seq: 1, tick: room.tick, move: { x: -1, y: 0 }, aim: Math.PI, fire: false, use: "none" });
+    for (let i = 0; i < 8; i += 1) stepRoom(room);
+    expect(door.angularVelocity ?? 0).toBeGreaterThan(0);
+  });
+
   it("damps doors back toward closed after push input stops", () => {
     const map = testMap();
     map.walls.push(createWall("door-damped", "door", { x: 120, y: 90 }, { x: 120, y: 150 }, 8));
@@ -210,6 +225,19 @@ describe("authoritative simulation", () => {
     applyClientMessage(openRoom, "p1", { type: "command", seq: 1, tick: openRoom.tick, move: { x: 1, y: 0 }, aim: 0, fire: false, use: "none" });
     for (let i = 0; i < 6; i += 1) stepRoom(openRoom);
     expect(openRoom.players.p1.position.x).toBeGreaterThan(150);
+
+    const mirroredMap = testMap();
+    mirroredMap.walls.push(createWall("door-open-right", "door", { x: 150, y: 90 }, { x: 150, y: 150 }, 8));
+    const mirroredRoom = activeRoom(mirroredMap);
+    const mirroredDoor = mirroredRoom.map.walls.find((wall) => wall.id === "door-open-right")!;
+    mirroredDoor.currentAngle = Math.PI / 2;
+    mirroredDoor.angularVelocity = 0;
+    mirroredDoor.a = mirroredDoor.hinge!;
+    mirroredDoor.b = { x: 90, y: 90 };
+    mirroredRoom.players.p1.position = { x: 170, y: 120 };
+    applyClientMessage(mirroredRoom, "p1", { type: "command", seq: 1, tick: mirroredRoom.tick, move: { x: -1, y: 0 }, aim: Math.PI, fire: false, use: "none" });
+    for (let i = 0; i < 6; i += 1) stepRoom(mirroredRoom);
+    expect(mirroredRoom.players.p1.position.x).toBeLessThan(150);
   });
 
   it("filters opponents outside the forward vision cone", () => {
@@ -677,15 +705,38 @@ describe("authoritative simulation", () => {
     expect(room.round.scores).toEqual({ p1: 0, p2: 0 });
   });
 
-  it("destroys transparent and mesh surfaces in one shot", () => {
+  it("blocks bullets on intact transparent windows and destroys destructible windows before later shots pass through", () => {
     const map = testMap();
     map.walls.push(createWall("glass", "transparent", { x: 100, y: 80 }, { x: 100, y: 160 }, 8, { destructible: true }));
-    map.walls.push(createWall("mesh", "mesh", { x: 160, y: 80 }, { x: 160, y: 160 }, 8, { destructible: true }));
     const room = activeRoom(map);
     applyClientMessage(room, "p1", { type: "command", seq: 1, tick: room.tick, move: { x: 0, y: 0 }, aim: 0, fire: true, use: "none" });
     stepRoom(room);
     expect(room.map.walls.find((wall) => wall.id === "glass")?.destroyed).toBe(true);
+    expect(room.players.p2.hp).toBe(5);
+    for (let i = 0; i < 6; i += 1) stepRoom(room);
+    applyClientMessage(room, "p1", { type: "command", seq: 2, tick: room.tick, move: { x: 0, y: 0 }, aim: 0, fire: true, use: "none" });
+    stepRoom(room);
+    expect(room.players.p2.hp).toBe(4);
+  });
+
+  it("blocks bullets on non-destructible transparent windows", () => {
+    const map = testMap();
+    map.walls.push(createWall("window", "transparent", { x: 100, y: 80 }, { x: 100, y: 160 }, 8));
+    const room = activeRoom(map);
+    applyClientMessage(room, "p1", { type: "command", seq: 1, tick: room.tick, move: { x: 0, y: 0 }, aim: 0, fire: true, use: "none" });
+    stepRoom(room);
+    expect(room.players.p2.hp).toBe(5);
+    expect(room.map.walls.find((wall) => wall.id === "window")?.destroyed).not.toBe(true);
+  });
+
+  it("keeps mesh surfaces shoot-through", () => {
+    const map = testMap();
+    map.walls.push(createWall("mesh", "mesh", { x: 160, y: 80 }, { x: 160, y: 160 }, 8, { destructible: true }));
+    const room = activeRoom(map);
+    applyClientMessage(room, "p1", { type: "command", seq: 1, tick: room.tick, move: { x: 0, y: 0 }, aim: 0, fire: true, use: "none" });
+    stepRoom(room);
     expect(room.map.walls.find((wall) => wall.id === "mesh")?.destroyed).toBe(true);
+    expect(room.players.p2.hp).toBe(4);
   });
 
   it("destroys destructible solid walls after five shots and never destroys doors", () => {

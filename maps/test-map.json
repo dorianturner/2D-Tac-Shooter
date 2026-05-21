@@ -680,7 +680,7 @@
       },
       "b": {
         "x": 880,
-        "y": 72
+        "y": 88
       },
       "thickness": 12,
       "blocksVision": true,
@@ -693,11 +693,11 @@
       "label": "DOOR",
       "a": {
         "x": 880,
-        "y": 72
+        "y": 88
       },
       "b": {
         "x": 880,
-        "y": 8
+        "y": 24
       },
       "thickness": 6,
       "blocksVision": false,
@@ -778,7 +778,7 @@
       "kind": "solid",
       "label": "wall",
       "a": {
-        "x": 72,
+        "x": 104,
         "y": 520
       },
       "b": {
@@ -795,11 +795,11 @@
       "kind": "door",
       "label": "DOOR",
       "a": {
-        "x": 8,
+        "x": 40,
         "y": 520
       },
       "b": {
-        "x": 72,
+        "x": 104,
         "y": 520
       },
       "thickness": 6,

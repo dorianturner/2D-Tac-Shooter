@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { createWall, deleteWallsById, hasLineOfSight, insertDoorGap, normalizeWallKind, parseMap, replaceWallSection, sampleMap, slugifyMapName, wallKindDefaults } from "./index.js";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
+import { createWall, deleteWallsById, hasLineOfSight, insertDoorGap, normalizeWallKind, parseMap, replaceWallSection, sampleMap, slugifyMapName, validateDoorSwing, wallKindDefaults } from "./index.js";
 
 describe("shared tactical primitives", () => {
   it("validates the sample map", () => {
@@ -52,6 +54,29 @@ describe("shared tactical primitives", () => {
     expect(next.map((wall) => wall.kind).sort()).toEqual(["door", "solid", "solid"]);
     expect(next.some((wall) => wall.id === "wall-1")).toBe(false);
     expect(next.find((wall) => wall.kind === "door")?.blocksMovement).toBe(false);
+  });
+
+  it("validates door swing clearance against blocking geometry", () => {
+    const clearWalls = insertDoorGap([createWall("wall-1", "solid", { x: 0, y: 50 }, { x: 120, y: 50 }, 10)], "wall-1", { x: 60, y: 50 }, 30, "door-clear");
+    expect(validateDoorSwing(clearWalls, clearWalls.find((wall) => wall.kind === "door")!)).toEqual({ valid: true });
+
+    const northBlocked = [
+      createWall("north", "solid", { x: 0, y: 0 }, { x: 160, y: 0 }, 18),
+      createWall("door", "door", { x: 80, y: 72 }, { x: 80, y: 8 }, 6)
+    ];
+    expect(validateDoorSwing(northBlocked, northBlocked[1]!).blockerId).toBe("north");
+
+    const westBlocked = [
+      createWall("west", "solid", { x: 0, y: 0 }, { x: 0, y: 160 }, 18),
+      createWall("door", "door", { x: 8, y: 80 }, { x: 72, y: 80 }, 6)
+    ];
+    expect(validateDoorSwing(westBlocked, westBlocked[1]!).blockerId).toBe("west");
+  });
+
+  it("keeps the saved test map free of door swing blockers", () => {
+    const map = parseMap(JSON.parse(readFileSync(resolve(process.cwd(), "../../maps/test-map.json"), "utf8")));
+    const blockedDoor = map.walls.find((wall) => wall.kind === "door" && !validateDoorSwing(map.walls, wall).valid);
+    expect(blockedDoor).toBeUndefined();
   });
 
   it("deletes all selected geometry ids", () => {
