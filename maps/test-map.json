@@ -1,0 +1,953 @@
+{
+  "id": "test-map",
+  "version": 5,
+  "name": "Test Map",
+  "bounds": {
+    "width": 1000,
+    "height": 640
+  },
+  "gridSize": 40,
+  "rooms": [
+    {
+      "id": "west-room",
+      "name": "Blue Setup",
+      "position": {
+        "x": 96,
+        "y": 96
+      },
+      "size": {
+        "x": 344,
+        "y": 424
+      }
+    },
+    {
+      "id": "east-room",
+      "name": "Orange Setup",
+      "position": {
+        "x": 520,
+        "y": 96
+      },
+      "size": {
+        "x": 344,
+        "y": 424
+      }
+    }
+  ],
+  "walls": [
+    {
+      "id": "north",
+      "kind": "solid",
+      "a": {
+        "x": 0,
+        "y": 0
+      },
+      "b": {
+        "x": 1000,
+        "y": 0
+      },
+      "thickness": 18,
+      "blocksVision": true,
+      "blocksMovement": true,
+      "destructible": false
+    },
+    {
+      "id": "west",
+      "kind": "solid",
+      "a": {
+        "x": 0,
+        "y": 0
+      },
+      "b": {
+        "x": 0,
+        "y": 640
+      },
+      "thickness": 18,
+      "blocksVision": true,
+      "blocksMovement": true,
+      "destructible": false
+    },
+    {
+      "id": "east",
+      "kind": "solid",
+      "a": {
+        "x": 1000,
+        "y": 0
+      },
+      "b": {
+        "x": 1000,
+        "y": 640
+      },
+      "thickness": 18,
+      "blocksVision": true,
+      "blocksMovement": true,
+      "destructible": false
+    },
+    {
+      "id": "door-9-right",
+      "kind": "solid",
+      "a": {
+        "x": 0,
+        "y": 640
+      },
+      "b": {
+        "x": 1000,
+        "y": 640
+      },
+      "thickness": 18,
+      "blocksVision": true,
+      "blocksMovement": true,
+      "destructible": false
+    },
+    {
+      "id": "door-10-left",
+      "kind": "solid",
+      "label": "wall",
+      "a": {
+        "x": 120,
+        "y": 640
+      },
+      "b": {
+        "x": 120,
+        "y": 592
+      },
+      "thickness": 12,
+      "blocksVision": true,
+      "blocksMovement": true,
+      "destructible": false
+    },
+    {
+      "id": "door-10-door",
+      "kind": "door",
+      "label": "DOOR",
+      "a": {
+        "x": 120,
+        "y": 592
+      },
+      "b": {
+        "x": 120,
+        "y": 528
+      },
+      "thickness": 6,
+      "blocksVision": false,
+      "blocksMovement": false,
+      "destructible": false
+    },
+    {
+      "id": "solid-11",
+      "kind": "solid",
+      "label": "wall",
+      "a": {
+        "x": 120,
+        "y": 520
+      },
+      "b": {
+        "x": 240,
+        "y": 520
+      },
+      "thickness": 12,
+      "blocksVision": true,
+      "blocksMovement": true,
+      "destructible": false
+    },
+    {
+      "id": "transparent-12",
+      "kind": "transparent",
+      "label": "transparent",
+      "a": {
+        "x": 240,
+        "y": 520
+      },
+      "b": {
+        "x": 320,
+        "y": 520
+      },
+      "thickness": 12,
+      "blocksVision": false,
+      "blocksMovement": true,
+      "destructible": false
+    },
+    {
+      "id": "solid-12",
+      "kind": "solid",
+      "label": "wall",
+      "a": {
+        "x": 320,
+        "y": 520
+      },
+      "b": {
+        "x": 480,
+        "y": 520
+      },
+      "thickness": 12,
+      "blocksVision": true,
+      "blocksMovement": true,
+      "destructible": false
+    },
+    {
+      "id": "door-14-left",
+      "kind": "solid",
+      "label": "wall",
+      "a": {
+        "x": 360,
+        "y": 320
+      },
+      "b": {
+        "x": 360,
+        "y": 448
+      },
+      "thickness": 12,
+      "blocksVision": true,
+      "blocksMovement": true,
+      "destructible": false
+    },
+    {
+      "id": "door-14-door",
+      "kind": "door",
+      "label": "DOOR",
+      "a": {
+        "x": 360,
+        "y": 448
+      },
+      "b": {
+        "x": 360,
+        "y": 512
+      },
+      "thickness": 6,
+      "blocksVision": false,
+      "blocksMovement": false,
+      "destructible": false
+    },
+    {
+      "id": "door-15-left",
+      "kind": "solid",
+      "label": "wall",
+      "a": {
+        "x": 360,
+        "y": 240
+      },
+      "b": {
+        "x": 232,
+        "y": 240
+      },
+      "thickness": 12,
+      "blocksVision": true,
+      "blocksMovement": true,
+      "destructible": false
+    },
+    {
+      "id": "door-15-right",
+      "kind": "solid",
+      "label": "wall",
+      "a": {
+        "x": 168,
+        "y": 240
+      },
+      "b": {
+        "x": 80,
+        "y": 240
+      },
+      "thickness": 12,
+      "blocksVision": true,
+      "blocksMovement": true,
+      "destructible": false
+    },
+    {
+      "id": "door-15-door",
+      "kind": "door",
+      "label": "DOOR",
+      "a": {
+        "x": 232,
+        "y": 240
+      },
+      "b": {
+        "x": 168,
+        "y": 240
+      },
+      "thickness": 6,
+      "blocksVision": false,
+      "blocksMovement": false,
+      "destructible": false
+    },
+    {
+      "id": "door-18-right",
+      "kind": "solid",
+      "label": "wall",
+      "a": {
+        "x": 360,
+        "y": 48
+      },
+      "b": {
+        "x": 360,
+        "y": 0
+      },
+      "thickness": 12,
+      "blocksVision": true,
+      "blocksMovement": true,
+      "destructible": false
+    },
+    {
+      "id": "door-18-door",
+      "kind": "door",
+      "label": "DOOR",
+      "a": {
+        "x": 360,
+        "y": 120
+      },
+      "b": {
+        "x": 360,
+        "y": 48
+      },
+      "thickness": 6,
+      "blocksVision": false,
+      "blocksMovement": false,
+      "destructible": false
+    },
+    {
+      "id": "room-20-east",
+      "kind": "solid",
+      "label": "room-20",
+      "roomId": "room-20",
+      "a": {
+        "x": 920,
+        "y": 200
+      },
+      "b": {
+        "x": 920,
+        "y": 360
+      },
+      "thickness": 12,
+      "blocksVision": true,
+      "blocksMovement": true,
+      "destructible": false
+    },
+    {
+      "id": "transparent-23",
+      "kind": "transparent",
+      "label": "transparent",
+      "a": {
+        "x": 360,
+        "y": 120
+      },
+      "b": {
+        "x": 360,
+        "y": 200
+      },
+      "thickness": 12,
+      "blocksVision": false,
+      "blocksMovement": true,
+      "destructible": false
+    },
+    {
+      "id": "solid-24",
+      "kind": "solid",
+      "label": "wall",
+      "a": {
+        "x": 360,
+        "y": 200
+      },
+      "b": {
+        "x": 360,
+        "y": 240
+      },
+      "thickness": 12,
+      "blocksVision": true,
+      "blocksMovement": true,
+      "destructible": false
+    },
+    {
+      "id": "door-25-left",
+      "kind": "solid",
+      "label": "room-20",
+      "roomId": "room-20",
+      "a": {
+        "x": 640,
+        "y": 360
+      },
+      "b": {
+        "x": 640,
+        "y": 312
+      },
+      "thickness": 12,
+      "blocksVision": true,
+      "blocksMovement": true,
+      "destructible": false
+    },
+    {
+      "id": "door-25-right",
+      "kind": "solid",
+      "label": "room-20",
+      "roomId": "room-20",
+      "a": {
+        "x": 640,
+        "y": 248
+      },
+      "b": {
+        "x": 640,
+        "y": 200
+      },
+      "thickness": 12,
+      "blocksVision": true,
+      "blocksMovement": true,
+      "destructible": false
+    },
+    {
+      "id": "door-25-door",
+      "kind": "door",
+      "label": "DOOR",
+      "a": {
+        "x": 640,
+        "y": 312
+      },
+      "b": {
+        "x": 640,
+        "y": 248
+      },
+      "thickness": 6,
+      "blocksVision": false,
+      "blocksMovement": false,
+      "destructible": false
+    },
+    {
+      "id": "door-27-left",
+      "kind": "solid",
+      "label": "room-20",
+      "roomId": "room-20",
+      "a": {
+        "x": 920,
+        "y": 360
+      },
+      "b": {
+        "x": 792,
+        "y": 360
+      },
+      "thickness": 12,
+      "blocksVision": true,
+      "blocksMovement": true,
+      "destructible": false
+    },
+    {
+      "id": "door-27-door",
+      "kind": "door",
+      "label": "DOOR",
+      "a": {
+        "x": 792,
+        "y": 360
+      },
+      "b": {
+        "x": 728,
+        "y": 360
+      },
+      "thickness": 6,
+      "blocksVision": false,
+      "blocksMovement": false,
+      "destructible": false
+    },
+    {
+      "id": "door-29-left",
+      "kind": "solid",
+      "label": "room-20",
+      "roomId": "room-20",
+      "a": {
+        "x": 728,
+        "y": 360
+      },
+      "b": {
+        "x": 680,
+        "y": 360
+      },
+      "thickness": 12,
+      "blocksVision": true,
+      "blocksMovement": true,
+      "destructible": false
+    },
+    {
+      "id": "transparent-29",
+      "kind": "transparent",
+      "label": "transparent",
+      "a": {
+        "x": 680,
+        "y": 360
+      },
+      "b": {
+        "x": 640,
+        "y": 360
+      },
+      "thickness": 12,
+      "blocksVision": false,
+      "blocksMovement": true,
+      "destructible": false
+    },
+    {
+      "id": "destructible-30",
+      "kind": "solid",
+      "label": "wall",
+      "a": {
+        "x": 800,
+        "y": 200
+      },
+      "b": {
+        "x": 640,
+        "y": 200
+      },
+      "thickness": 12,
+      "blocksVision": true,
+      "blocksMovement": true,
+      "destructible": true
+    },
+    {
+      "id": "solid-31",
+      "kind": "solid",
+      "label": "wall",
+      "a": {
+        "x": 120,
+        "y": 320
+      },
+      "b": {
+        "x": 280,
+        "y": 320
+      },
+      "thickness": 12,
+      "blocksVision": true,
+      "blocksMovement": true,
+      "destructible": false
+    },
+    {
+      "id": "solid-32",
+      "kind": "solid",
+      "label": "wall",
+      "a": {
+        "x": 200,
+        "y": 440
+      },
+      "b": {
+        "x": 280,
+        "y": 440
+      },
+      "thickness": 12,
+      "blocksVision": true,
+      "blocksMovement": true,
+      "destructible": false
+    },
+    {
+      "id": "destructible-34",
+      "kind": "solid",
+      "label": "wall",
+      "a": {
+        "x": 40,
+        "y": 440
+      },
+      "b": {
+        "x": 120,
+        "y": 440
+      },
+      "thickness": 12,
+      "blocksVision": true,
+      "blocksMovement": true,
+      "destructible": true
+    },
+    {
+      "id": "destructible-35",
+      "kind": "solid",
+      "label": "wall",
+      "a": {
+        "x": 640,
+        "y": 120
+      },
+      "b": {
+        "x": 520,
+        "y": 120
+      },
+      "thickness": 12,
+      "blocksVision": true,
+      "blocksMovement": true,
+      "destructible": true
+    },
+    {
+      "id": "destructible-36",
+      "kind": "solid",
+      "label": "wall",
+      "a": {
+        "x": 640,
+        "y": 360
+      },
+      "b": {
+        "x": 640,
+        "y": 480
+      },
+      "thickness": 12,
+      "blocksVision": true,
+      "blocksMovement": true,
+      "destructible": true
+    },
+    {
+      "id": "room-36-north",
+      "kind": "solid",
+      "label": "room-36",
+      "roomId": "room-36",
+      "a": {
+        "x": 440,
+        "y": 280
+      },
+      "b": {
+        "x": 560,
+        "y": 280
+      },
+      "thickness": 12,
+      "blocksVision": true,
+      "blocksMovement": true,
+      "destructible": false
+    },
+    {
+      "id": "room-36-east",
+      "kind": "solid",
+      "label": "room-36",
+      "roomId": "room-36",
+      "a": {
+        "x": 560,
+        "y": 280
+      },
+      "b": {
+        "x": 560,
+        "y": 360
+      },
+      "thickness": 12,
+      "blocksVision": true,
+      "blocksMovement": true,
+      "destructible": false
+    },
+    {
+      "id": "room-36-south",
+      "kind": "solid",
+      "label": "room-36",
+      "roomId": "room-36",
+      "a": {
+        "x": 560,
+        "y": 360
+      },
+      "b": {
+        "x": 440,
+        "y": 360
+      },
+      "thickness": 12,
+      "blocksVision": true,
+      "blocksMovement": true,
+      "destructible": false
+    },
+    {
+      "id": "room-36-west",
+      "kind": "solid",
+      "label": "room-36",
+      "roomId": "room-36",
+      "a": {
+        "x": 440,
+        "y": 360
+      },
+      "b": {
+        "x": 440,
+        "y": 280
+      },
+      "thickness": 12,
+      "blocksVision": true,
+      "blocksMovement": true,
+      "destructible": false
+    },
+    {
+      "id": "room-40-south",
+      "kind": "solid",
+      "label": "room-40",
+      "roomId": "room-40",
+      "a": {
+        "x": 1000,
+        "y": 120
+      },
+      "b": {
+        "x": 880,
+        "y": 120
+      },
+      "thickness": 12,
+      "blocksVision": true,
+      "blocksMovement": true,
+      "destructible": false
+    },
+    {
+      "id": "door-42-left",
+      "kind": "solid",
+      "label": "room-40",
+      "roomId": "room-40",
+      "a": {
+        "x": 880,
+        "y": 120
+      },
+      "b": {
+        "x": 880,
+        "y": 72
+      },
+      "thickness": 12,
+      "blocksVision": true,
+      "blocksMovement": true,
+      "destructible": false
+    },
+    {
+      "id": "door-42-door",
+      "kind": "door",
+      "label": "DOOR",
+      "a": {
+        "x": 880,
+        "y": 72
+      },
+      "b": {
+        "x": 880,
+        "y": 8
+      },
+      "thickness": 6,
+      "blocksVision": false,
+      "blocksMovement": false,
+      "destructible": false
+    },
+    {
+      "id": "door-43-right",
+      "kind": "solid",
+      "label": "room-20",
+      "roomId": "room-20",
+      "a": {
+        "x": 872,
+        "y": 200
+      },
+      "b": {
+        "x": 920,
+        "y": 200
+      },
+      "thickness": 12,
+      "blocksVision": true,
+      "blocksMovement": true,
+      "destructible": false
+    },
+    {
+      "id": "door-43-door",
+      "kind": "door",
+      "label": "DOOR",
+      "a": {
+        "x": 808,
+        "y": 200
+      },
+      "b": {
+        "x": 872,
+        "y": 200
+      },
+      "thickness": 6,
+      "blocksVision": false,
+      "blocksMovement": false,
+      "destructible": false
+    },
+    {
+      "id": "solid-44",
+      "kind": "solid",
+      "label": "wall",
+      "a": {
+        "x": 720,
+        "y": 440
+      },
+      "b": {
+        "x": 840,
+        "y": 560
+      },
+      "thickness": 12,
+      "blocksVision": true,
+      "blocksMovement": true,
+      "destructible": false
+    },
+    {
+      "id": "destructible-45",
+      "kind": "solid",
+      "label": "wall",
+      "a": {
+        "x": 80,
+        "y": 240
+      },
+      "b": {
+        "x": 0,
+        "y": 240
+      },
+      "thickness": 12,
+      "blocksVision": true,
+      "blocksMovement": true,
+      "destructible": true
+    },
+    {
+      "id": "door-46-right",
+      "kind": "solid",
+      "label": "wall",
+      "a": {
+        "x": 72,
+        "y": 520
+      },
+      "b": {
+        "x": 120,
+        "y": 520
+      },
+      "thickness": 12,
+      "blocksVision": true,
+      "blocksMovement": true,
+      "destructible": false
+    },
+    {
+      "id": "door-46-door",
+      "kind": "door",
+      "label": "DOOR",
+      "a": {
+        "x": 8,
+        "y": 520
+      },
+      "b": {
+        "x": 72,
+        "y": 520
+      },
+      "thickness": 6,
+      "blocksVision": false,
+      "blocksMovement": false,
+      "destructible": false
+    },
+    {
+      "id": "mesh-46",
+      "kind": "mesh",
+      "label": "mesh",
+      "a": {
+        "x": 360,
+        "y": 240
+      },
+      "b": {
+        "x": 360,
+        "y": 320
+      },
+      "thickness": 12,
+      "blocksVision": false,
+      "blocksMovement": true,
+      "destructible": false
+    },
+    {
+      "id": "transparent-47",
+      "kind": "transparent",
+      "label": "transparent",
+      "a": {
+        "x": 240,
+        "y": 240
+      },
+      "b": {
+        "x": 200,
+        "y": 160
+      },
+      "thickness": 12,
+      "blocksVision": false,
+      "blocksMovement": true,
+      "destructible": false
+    },
+    {
+      "id": "mesh-48",
+      "kind": "mesh",
+      "label": "mesh",
+      "a": {
+        "x": 200,
+        "y": 160
+      },
+      "b": {
+        "x": 200,
+        "y": 120
+      },
+      "thickness": 12,
+      "blocksVision": false,
+      "blocksMovement": true,
+      "destructible": false
+    }
+  ],
+  "spawns": [
+    {
+      "id": "p1",
+      "team": "blue",
+      "position": {
+        "x": 40,
+        "y": 600
+      },
+      "angle": 0
+    },
+    {
+      "id": "p2",
+      "team": "orange",
+      "position": {
+        "x": 960,
+        "y": 40
+      },
+      "angle": 3.141592653589793
+    }
+  ],
+  "sensors": [
+    {
+      "id": "blue-camera",
+      "owner": "p1",
+      "kind": "camera",
+      "position": {
+        "x": 330,
+        "y": 150
+      },
+      "angle": 0.35,
+      "range": 260,
+      "fov": 1.208304866765305
+    },
+    {
+      "id": "orange-motion",
+      "owner": "p2",
+      "kind": "motion",
+      "position": {
+        "x": 650,
+        "y": 490
+      },
+      "angle": 3.141592653589793,
+      "range": 210,
+      "fov": 6.283185307179586
+    }
+  ],
+  "utilityPlacements": [
+    {
+      "id": "demo-breach",
+      "kind": "breach",
+      "position": {
+        "x": 438,
+        "y": 420
+      },
+      "radius": 46,
+      "owner": "p1"
+    },
+    {
+      "id": "demo-smoke",
+      "kind": "smoke",
+      "position": {
+        "x": 560,
+        "y": 260
+      },
+      "radius": 72,
+      "owner": "p2"
+    }
+  ],
+  "lighting": [
+    {
+      "id": "west-light",
+      "position": {
+        "x": 260,
+        "y": 170
+      },
+      "radius": 150,
+      "intensity": 0.8,
+      "destructible": true
+    },
+    {
+      "id": "east-light",
+      "position": {
+        "x": 710,
+        "y": 470
+      },
+      "radius": 150,
+      "intensity": 0.8,
+      "destructible": true
+    }
+  ],
+  "notes": "Prototype map for tactical readability, breach routes, and sensor overlap."
+}

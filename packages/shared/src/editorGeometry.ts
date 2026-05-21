@@ -1,0 +1,156 @@
+import { add, distance, distanceToSegment, mul, normalize, sub } from "./geometry.js";
+import type { MapDefinition, Vec2, Wall, WallKind } from "./types.js";
+
+export function wallKindDefaults(kind: WallKind): Pick<Wall, "kind" | "blocksVision" | "blocksMovement" | "destructible"> {
+  if (kind === "transparent") return { kind, blocksVision: false, blocksMovement: true, destructible: false };
+  if (kind === "mesh") return { kind, blocksVision: false, blocksMovement: true, destructible: false };
+  if (kind === "door") return { kind, blocksVision: false, blocksMovement: false, destructible: false };
+  return { kind, blocksVision: true, blocksMovement: true, destructible: false };
+}
+
+export function createWall(id: string, kind: WallKind, a: Vec2, b: Vec2, thickness = 12, extra: Partial<Wall> = {}): Wall {
+  return {
+    id,
+    ...wallKindDefaults(kind),
+    a,
+    b,
+    thickness,
+    ...extra
+  };
+}
+
+export function normalizeWallKind(wall: Wall): Wall {
+  const legacyKind = (wall as unknown as { kind?: string }).kind;
+  if (legacyKind === "destructible") {
+    const normalized: Wall = { ...wall, kind: "solid", destructible: true };
+    if (wall.label === "destructible") normalized.label = "wall";
+    return normalized;
+  }
+  const kind = legacyKind === "transparent" || legacyKind === "door" || legacyKind === "mesh" || legacyKind === "solid" ? legacyKind : wall.blocksVision ? "solid" : "transparent";
+  return { ...wall, kind };
+}
+
+export function normalizeMapDefinition(map: MapDefinition): MapDefinition {
+  return {
+    ...map,
+    walls: map.walls.map(normalizeWallKind)
+  };
+}
+
+export function deleteWallsById(walls: Wall[], ids: Set<string>): Wall[] {
+  return walls.filter((wall) => !ids.has(wall.id));
+}
+
+export function nearestPointOnWall(wall: Wall, point: Vec2): Vec2 {
+  const ab = sub(wall.b, wall.a);
+  const lengthSquared = ab.x * ab.x + ab.y * ab.y;
+  if (lengthSquared <= 0) return { ...wall.a };
+  const t = Math.max(0, Math.min(1, ((point.x - wall.a.x) * ab.x + (point.y - wall.a.y) * ab.y) / lengthSquared));
+  return add(wall.a, mul(ab, t));
+}
+
+export function insertDoorGap(walls: Wall[], wallId: string, point: Vec2, width: number, idPrefix: string): Wall[] {
+  const wall = walls.find((candidate) => candidate.id === wallId);
+  if (!wall || wall.kind === "door") return walls;
+  const hit = nearestPointOnWall(wall, point);
+  const direction = normalize(sub(wall.b, wall.a));
+  const half = width / 2;
+  const gapA = add(hit, mul(direction, -half));
+  const gapB = add(hit, mul(direction, half));
+  const minimumSegment = Math.max(8, wall.thickness);
+  const leftLength = distance(wall.a, gapA);
+  const rightLength = distance(gapB, wall.b);
+  const next: Wall[] = walls.filter((candidate) => candidate.id !== wallId);
+  if (leftLength > minimumSegment) next.push({ ...wall, id: `${idPrefix}-left`, b: gapA });
+  if (rightLength > minimumSegment) next.push({ ...wall, id: `${idPrefix}-right`, a: gapB });
+  next.push(createWall(`${idPrefix}-door`, "door", gapA, gapB, Math.max(4, wall.thickness / 2), { label: "DOOR" }));
+  return next;
+}
+
+export function wallIntersectsRect(wall: Wall, min: Vec2, max: Vec2): boolean {
+  if (pointInRect(wall.a, min, max) || pointInRect(wall.b, min, max)) return true;
+  const center = { x: (wall.a.x + wall.b.x) / 2, y: (wall.a.y + wall.b.y) / 2 };
+  return pointInRect(center, min, max) || distanceToSegment(min, wall.a, wall.b) <= wall.thickness || distanceToSegment(max, wall.a, wall.b) <= wall.thickness;
+}
+
+export function slugifyMapName(name: string): string {
+  const slug = name
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .replace(/-{2,}/g, "-");
+  return slug || "untitled-map";
+}
+
+export function replaceWallSection(walls: Wall[], replacement: Wall): Wall[] {
+  const axis = dominantAxis(replacement);
+  const start = axisValue(replacement.a, axis);
+  const end = axisValue(replacement.b, axis);
+  const min = Math.min(start, end);
+  const max = Math.max(start, end);
+  const result: Wall[] = [];
+  let replaced = false;
+
+  for (const wall of walls) {
+    if (wall.kind === "door" || !isReplaceableOverlap(wall, replacement, axis, min, max)) {
+      result.push(wall);
+      continue;
+    }
+    replaced = true;
+    const wallStart = axisValue(wall.a, axis);
+    const wallEnd = axisValue(wall.b, axis);
+    const wallMin = Math.min(wallStart, wallEnd);
+    const wallMax = Math.max(wallStart, wallEnd);
+    const overlapMin = Math.max(wallMin, min);
+    const overlapMax = Math.min(wallMax, max);
+    const minimumSegment = Math.max(8, wall.thickness);
+
+    const before = segmentFromRange(wall, axis, wallMin, overlapMin, `${wall.id}-before`);
+    if (before && distance(before.a, before.b) >= minimumSegment) result.push(before);
+    const after = segmentFromRange(wall, axis, overlapMax, wallMax, `${wall.id}-after`);
+    if (after && distance(after.a, after.b) >= minimumSegment) result.push(after);
+  }
+
+  result.push(replacement);
+  return replaced ? result : [...walls, replacement];
+}
+
+function isReplaceableOverlap(wall: Wall, replacement: Wall, axis: "x" | "y", min: number, max: number): boolean {
+  if (wall.kind && wall.kind !== "solid") return false;
+  if (!wall.blocksMovement || !wall.blocksVision || wall.destructible) return false;
+  if (dominantAxis(wall) !== axis) return false;
+  const crossAxis: "x" | "y" = axis === "x" ? "y" : "x";
+  const crossDelta = Math.max(
+    Math.abs(axisValue(wall.a, crossAxis) - axisValue(replacement.a, crossAxis)),
+    Math.abs(axisValue(wall.b, crossAxis) - axisValue(replacement.b, crossAxis))
+  );
+  if (crossDelta > Math.max(10, wall.thickness)) return false;
+  const wallMin = Math.min(axisValue(wall.a, axis), axisValue(wall.b, axis));
+  const wallMax = Math.max(axisValue(wall.a, axis), axisValue(wall.b, axis));
+  return Math.max(wallMin, min) < Math.min(wallMax, max);
+}
+
+function dominantAxis(wall: Wall): "x" | "y" {
+  return Math.abs(wall.b.x - wall.a.x) >= Math.abs(wall.b.y - wall.a.y) ? "x" : "y";
+}
+
+function axisValue(point: Vec2, axis: "x" | "y"): number {
+  return axis === "x" ? point.x : point.y;
+}
+
+function segmentFromRange(wall: Wall, axis: "x" | "y", min: number, max: number, id: string): Wall | null {
+  if (max <= min) return null;
+  const reverse = axisValue(wall.a, axis) > axisValue(wall.b, axis);
+  const aValue = reverse ? max : min;
+  const bValue = reverse ? min : max;
+  const crossAxis: "x" | "y" = axis === "x" ? "y" : "x";
+  const cross = (axisValue(wall.a, crossAxis) + axisValue(wall.b, crossAxis)) / 2;
+  const a = axis === "x" ? { x: aValue, y: cross } : { x: cross, y: aValue };
+  const b = axis === "x" ? { x: bValue, y: cross } : { x: cross, y: bValue };
+  return { ...wall, id, a, b };
+}
+
+function pointInRect(point: Vec2, min: Vec2, max: Vec2): boolean {
+  return point.x >= min.x && point.x <= max.x && point.y >= min.y && point.y <= max.y;
+}
