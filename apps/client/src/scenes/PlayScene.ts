@@ -1,5 +1,5 @@
 import Phaser from "phaser";
-import { distance, isHingedDoorSegment, lineIntersection, normalize, playerClassPresets, weaponPresets, type GadgetKind, type PlayerClassPresetId, type PlayerCommand, type PlayerId, type PlayerState, type RoomSummary, type ServerMessage, type ServerSnapshot, type ServerWelcome, type ShotImpact, type Vec2, type Wall, type WeaponPresetId, TICK_RATE } from "@tac/shared";
+import { distance, isHingedDoorSegment, lineIntersection, normalize, playerClassPresets, weaponPresets, type GadgetKind, type PlayerClassPresetId, type PlayerCommand, type PlayerId, type PlayerLoadoutSelection, type PlayerState, type RoomSummary, type ServerMessage, type ServerSnapshot, type ServerWelcome, type ShotImpact, type Vec2, type Wall, type WeaponPresetId, TICK_RATE } from "@tac/shared";
 import { listMaps, listRooms } from "../editorApi";
 import { mapSummaryToPickable, pickFromList } from "../fuzzyPicker";
 import { colors, drawDeployedCamera, drawFogOfWar, drawMap, drawMolotovZone, drawPlayer, drawSmokeZone, drawSoundSensorZone } from "../render";
@@ -113,7 +113,11 @@ export class PlayScene extends Phaser.Scene {
         <p class="eyebrow">Local Multiplayer</p>
         <h1>Create Or Join</h1>
         <p>Pick a saved map, create a room, then open another tab to join it. Movement is WASD; doors can be pushed or toggled with E.</p>
-        <div class="loadout-picker">
+        <div class="loadout-picker" data-loadout-picker>
+          <div class="loadout-heading">
+            <strong data-loadout-title>Starting Loadout</strong>
+            <span data-loadout-mode>used when creating or joining</span>
+          </div>
           <label>Class
             <select data-loadout="class">
               ${Object.values(playerClassPresets).map((preset) => `<option value="${preset.id}">${preset.name}</option>`).join("")}
@@ -124,6 +128,7 @@ export class PlayScene extends Phaser.Scene {
               ${Object.values(weaponPresets).map((weapon) => `<option value="${weapon.id}">${weapon.name}</option>`).join("")}
             </select>
           </label>
+          <div class="loadout-note" data-loadout-note>${formatLoadout(this.currentLoadout())}</div>
         </div>
         <div class="menu-actions">
           <button class="primary-action" data-action="create">Create Game</button>
@@ -155,9 +160,11 @@ export class PlayScene extends Phaser.Scene {
     this.shell.querySelector("[data-action='lobby']")?.addEventListener("click", () => this.returnToLobby());
     this.shell.querySelector<HTMLSelectElement>("[data-loadout='class']")?.addEventListener("change", (event) => {
       this.selectedClass = (event.currentTarget as HTMLSelectElement).value as PlayerClassPresetId;
+      this.handleLoadoutChange();
     });
     this.shell.querySelector<HTMLSelectElement>("[data-loadout='weapon']")?.addEventListener("change", (event) => {
       this.selectedWeapon = (event.currentTarget as HTMLSelectElement).value as WeaponPresetId;
+      this.handleLoadoutChange();
     });
     void this.refreshRooms();
     this.startRoomRefresh();
@@ -213,7 +220,7 @@ export class PlayScene extends Phaser.Scene {
     this.roomRefreshTimer = undefined;
   }
 
-  private connect(hello: { mode: "create" | "join"; mapId?: string; roomId?: string; debug: boolean; loadout?: { classId: PlayerClassPresetId; weaponId: WeaponPresetId } }): void {
+  private connect(hello: { mode: "create" | "join"; mapId?: string; roomId?: string; debug: boolean; loadout?: PlayerLoadoutSelection }): void {
     this.stopRoomRefresh();
     this.socket?.close();
     this.snapshot = undefined;
@@ -228,8 +235,15 @@ export class PlayScene extends Phaser.Scene {
     this.socket.addEventListener("message", (event) => this.onMessage(JSON.parse(event.data as string) as ServerMessage));
   }
 
-  private currentLoadout(): { classId: PlayerClassPresetId; weaponId: WeaponPresetId } {
+  private currentLoadout(): PlayerLoadoutSelection {
     return { classId: this.selectedClass, weaponId: this.selectedWeapon };
+  }
+
+  private handleLoadoutChange(): void {
+    this.updateLoadoutStatus(this.snapshot);
+    if (this.socket?.readyState === WebSocket.OPEN && this.welcome) {
+      this.send({ type: "loadout", loadout: this.currentLoadout() });
+    }
   }
 
   private onMessage(message: ServerMessage): void {
@@ -240,6 +254,7 @@ export class PlayScene extends Phaser.Scene {
       const roomHeader = this.shell?.querySelector<HTMLElement>(".room-header");
       if (roomHeader) roomHeader.style.display = "none";
       drawMap(this.mapLayer!, message.map);
+      this.updateLoadoutStatus();
       this.setHud(`Room ${message.roomId} | ${message.playerId.toUpperCase()} | ${message.map.name} | waiting for player`);
     } else if (message.type === "snapshot") {
       if (this.pendingDeploy) {
@@ -253,6 +268,7 @@ export class PlayScene extends Phaser.Scene {
       }
       this.snapshot = message;
       this.lastSnapshotAtMs = performance.now();
+      this.updateLoadoutStatus(message);
       this.renderMap(message);
       this.renderSnapshot(message);
     } else if (message.type === "error") {
@@ -501,6 +517,7 @@ export class PlayScene extends Phaser.Scene {
         <button class="${this.selectedGadget === "sound" ? "selected" : ""}" data-gadget="sound">SND ${snapshot.self.gadgets.sound}</button>
       </div>
       <div class="hud-meta">${this.welcome.roomId} | ${snapshot.playerId.toUpperCase()} | ${snapshot.self.className} | ${snapshot.self.weaponName} | ${this.welcome.map.name}${roundResult}</div>
+      <div class="hud-meta">${snapshot.nextLoadout ? `Next round: ${formatLoadout(snapshot.nextLoadout)}` : "Loadout changes at top apply next round"}</div>
       ${doorDebug ? `<div class="hud-meta">${doorDebug}</div>` : ""}
     `);
     this.hud?.querySelectorAll<HTMLButtonElement>("[data-gadget]").forEach((button) => {
@@ -525,6 +542,45 @@ export class PlayScene extends Phaser.Scene {
   private setHudHtml(html: string): void {
     if (this.hud) this.hud.innerHTML = html;
   }
+
+  private updateLoadoutStatus(snapshot?: ServerSnapshot): void {
+    const title = this.shell?.querySelector<HTMLElement>("[data-loadout-title]");
+    const mode = this.shell?.querySelector<HTMLElement>("[data-loadout-mode]");
+    const note = this.shell?.querySelector<HTMLElement>("[data-loadout-note]");
+    if (!title || !mode || !note) return;
+    const selectedLoadout = this.currentLoadout();
+    if (!this.welcome) {
+      title.textContent = "Starting Loadout";
+      mode.textContent = "used when creating or joining";
+      note.textContent = formatLoadout(selectedLoadout);
+      return;
+    }
+    title.textContent = "Next Round Loadout";
+    mode.textContent = "changes are queued";
+    if (snapshot?.nextLoadout) {
+      note.textContent = `Queued for next round: ${formatLoadout(snapshot.nextLoadout)}`;
+      return;
+    }
+    if (snapshot && !loadoutMatchesSelf(selectedLoadout, snapshot.self)) {
+      note.textContent = `Sending next-round change: ${formatLoadout(selectedLoadout)}`;
+      return;
+    }
+    if (snapshot) {
+      note.textContent = `Current round: ${snapshot.self.className} / ${snapshot.self.weaponName}`;
+      return;
+    }
+    note.textContent = `Will apply next round: ${formatLoadout(selectedLoadout)}`;
+  }
+}
+
+function formatLoadout(loadout: PlayerLoadoutSelection): string {
+  const className = loadout.customClass?.name ?? playerClassPresets[loadout.classId ?? "operator"]?.name ?? "Operator";
+  const weaponName = weaponPresets[loadout.weaponId ?? "assault"]?.name ?? "Assault Rifle";
+  return `${className} / ${weaponName}`;
+}
+
+function loadoutMatchesSelf(loadout: PlayerLoadoutSelection, self: PlayerState): boolean {
+  return (loadout.classId ?? "operator") === self.classId && (loadout.weaponId ?? "assault") === self.weaponId;
 }
 
 function roomToPickable(room: RoomSummary) {

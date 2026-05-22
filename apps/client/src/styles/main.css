@@ -88,6 +88,31 @@ canvas {
   margin: 14px 0;
 }
 
+.loadout-heading,
+.loadout-note {
+  grid-column: 1 / -1;
+}
+
+.loadout-heading {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.loadout-heading strong {
+  color: #d7f3ff;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0;
+}
+
+.loadout-heading span,
+.loadout-note {
+  color: #ffcc66;
+  font-size: 12px;
+}
+
 .loadout-picker label {
   display: grid;
   gap: 5px;

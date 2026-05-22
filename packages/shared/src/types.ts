@@ -191,6 +191,7 @@ export interface ServerSnapshot {
   playerId: PlayerId;
   round: RoundState;
   self: PlayerState;
+  nextLoadout?: PlayerLoadoutSelection;
   visiblePlayers: PlayerState[];
   detections: Detection[];
   map: {
@@ -324,6 +325,11 @@ export interface RematchRequest {
   type: "rematch";
 }
 
+export interface LoadoutChangeRequest {
+  type: "loadout";
+  loadout: PlayerLoadoutSelection;
+}
+
 export interface ServerWelcome {
   type: "welcome";
   playerId: PlayerId;
@@ -341,5 +347,5 @@ export interface RoomSummary {
   phase: RoundPhase;
 }
 
-export type ClientMessage = ClientHello | PlayerCommand | RematchRequest;
+export type ClientMessage = ClientHello | PlayerCommand | RematchRequest | LoadoutChangeRequest;
 export type ServerMessage = ServerWelcome | ServerSnapshot | { type: "rooms"; rooms: RoomSummary[] } | { type: "error"; message: string };

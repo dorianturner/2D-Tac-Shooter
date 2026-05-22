@@ -124,6 +124,7 @@ interface PlayerSlot {
   connected: boolean;
   debug: boolean;
   reconnectToken: string;
+  pendingLoadout?: PlayerLoadoutSelection;
   inputState: InputState;
   pendingActions: PendingAction[];
   seenActionSeqs: Set<string>;
@@ -284,6 +285,10 @@ export function applyClientMessage(room: RoomState, playerId: PlayerId, message:
     if (room.round.matchWinner && playerIds(room).every((id) => room.rematchRequests.has(id))) resetMatch(room);
     return;
   }
+  if (message.type === "loadout") {
+    getSlot(room, playerId).pendingLoadout = structuredClone(message.loadout);
+    return;
+  }
   if (message.type !== "command") return;
   const command = { ...message, move: normalize(message.move), tick: room.tick };
   const slot = getSlot(room, playerId);
@@ -357,6 +362,7 @@ export function stepRoom(room: RoomState): void {
   room.soundSensors = room.soundSensors.filter((zone) => !zone.destroyed);
   if (room.round.phase === "ended") return;
   if (room.round.phase === "countdown" && room.tick >= room.round.startsAtTick) {
+    applyPendingLoadouts(room);
     room.round.phase = "active";
     delete room.round.winner;
     delete room.round.reason;
@@ -915,6 +921,7 @@ function resetPlayersForRound(room: RoomState): void {
   for (const spawn of room.map.spawns) {
     const player = getPlayer(room, spawn.id);
     const slot = getSlot(room, player.id);
+    applyPendingLoadout(player, slot);
     player.position = { ...spawn.position };
     player.velocity = { x: 0, y: 0 };
     player.aim = spawn.angle;
@@ -936,6 +943,28 @@ function resetPlayersForRound(room: RoomState): void {
     slot.lastSeenWalls.clear();
     slot.lastSeenCameras.clear();
   }
+}
+
+function applyPendingLoadouts(room: RoomState): void {
+  for (const player of Object.values(room.players)) {
+    applyPendingLoadout(player, getSlot(room, player.id));
+  }
+}
+
+function applyPendingLoadout(player: PlayerState, slot: PlayerSlot): void {
+  if (!slot.pendingLoadout) return;
+  applyPlayerLoadout(player, slot.pendingLoadout);
+  refillPlayerResources(player);
+  delete slot.pendingLoadout;
+}
+
+function refillPlayerResources(player: PlayerState): void {
+  const weapon = createWeapon({ weaponId: player.weaponId });
+  player.magSize = weapon.magSize;
+  player.ammo = weapon.magSize;
+  player.isReloading = false;
+  delete player.reloadEndsAtTick;
+  player.gadgets = { ...player.gadgetLoadout };
 }
 
 function resetMatch(room: RoomState): void {
@@ -1050,6 +1079,7 @@ export function snapshotFor(room: RoomState, playerId: PlayerId): ServerSnapshot
     playerId,
     round: { ...room.round, scores: { ...room.round.scores } },
     self: { ...self, position: { ...self.position }, velocity: { ...self.velocity } },
+    ...(slot.pendingLoadout ? { nextLoadout: structuredClone(slot.pendingLoadout) } : {}),
     visiblePlayers,
     detections: debug ? room.detections : room.detections.filter((detection) => detection.owner === playerId || isPointVisibleToPlayer(room, self, detection.position)),
     map: { walls: debug ? room.map.walls : wallsForPlayer(room, playerId), sensors: debug ? room.map.sensors : [] },

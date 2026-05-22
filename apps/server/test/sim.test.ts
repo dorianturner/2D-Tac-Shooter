@@ -850,6 +850,40 @@ describe("authoritative simulation", () => {
     expect(room.players.p1.gadgets.camera).toBe(2);
   });
 
+  it("queues in-game loadout changes and applies them on the next round", () => {
+    const room = activeRoomWithLoadout(testMap(), { classId: "operator", weaponId: "assault" });
+    applyClientMessage(room, "p1", { type: "loadout", loadout: { classId: "scout", weaponId: "shotgun" } });
+
+    expect(room.players.p1.classId).toBe("operator");
+    expect(room.players.p1.weaponId).toBe("assault");
+    expect(snapshotFor(room, "p1").nextLoadout).toEqual({ classId: "scout", weaponId: "shotgun" });
+
+    shootUntilRoundEnds(room);
+
+    expect(room.players.p1.classId).toBe("scout");
+    expect(room.players.p1.weaponId).toBe("shotgun");
+    expect(room.players.p1.magSize).toBe(6);
+    expect(room.players.p1.ammo).toBe(6);
+    expect(room.players.p1.gadgets).toMatchObject({ camera: 2, molotov: 0, sound: 2 });
+    expect(snapshotFor(room, "p1").nextLoadout).toBeUndefined();
+  });
+
+  it("applies queued loadout changes before the first active round starts", () => {
+    const room = createRoom("pre-round-loadout", testMap());
+    joinRoom(room, false, "p1", { classId: "scout", weaponId: "sniper" });
+    joinRoom(room, false, "p2");
+    applyClientMessage(room, "p1", { type: "loadout", loadout: { classId: "breacher", weaponId: "assault" } });
+
+    for (let i = 0; i < 46; i += 1) stepRoom(room);
+
+    expect(room.round.phase).toBe("active");
+    expect(room.players.p1.classId).toBe("breacher");
+    expect(room.players.p1.weaponId).toBe("assault");
+    expect(room.players.p1.magSize).toBe(10);
+    expect(room.players.p1.ammo).toBe(10);
+    expect(room.players.p1.gadgets).toMatchObject({ camera: 0, molotov: 2, wall: 3 });
+  });
+
   it("uses selected gun factories for vision and one-shot weapon damage", () => {
     const longMap = testMap();
     longMap.bounds.width = 900;
