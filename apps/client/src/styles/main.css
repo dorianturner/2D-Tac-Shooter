@@ -212,13 +212,18 @@ canvas {
   position: absolute;
   top: 16px;
   bottom: 16px;
-  width: 252px;
+  width: 276px;
   overflow: auto;
   border: 1px solid rgba(118, 219, 255, 0.28);
-  background: rgba(4, 13, 20, 0.9);
-  padding: 14px;
-  border-radius: 6px;
+  background:
+    linear-gradient(rgba(118, 219, 255, 0.035) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(118, 219, 255, 0.035) 1px, transparent 1px),
+    rgba(4, 13, 20, 0.93);
+  background-size: 18px 18px;
+  padding: 16px;
+  border-radius: 8px;
   pointer-events: auto;
+  box-shadow: 0 16px 42px rgba(0, 0, 0, 0.34);
 }
 
 .editor-left {
@@ -267,6 +272,56 @@ canvas {
 .tool-grid button.active {
   border-color: rgba(93, 242, 182, 0.8);
   background: rgba(24, 94, 83, 0.82);
+}
+
+.blueprint-panel {
+  border: 1px solid rgba(118, 219, 255, 0.18);
+  background: rgba(5, 12, 18, 0.58);
+  border-radius: 6px;
+  padding: 10px;
+}
+
+.blueprint-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+
+.blueprint-actions button,
+.blueprint-list button {
+  border: 1px solid rgba(118, 219, 255, 0.28);
+  background: rgba(9, 28, 39, 0.9);
+  color: #d7f3ff;
+  padding: 8px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.blueprint-actions button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.blueprint-list {
+  display: grid;
+  gap: 6px;
+}
+
+.blueprint-list button {
+  text-align: left;
+}
+
+.blueprint-list button.active {
+  border-color: rgba(93, 242, 182, 0.72);
+  background: rgba(24, 94, 83, 0.72);
+}
+
+.blueprint-list button span {
+  display: block;
+  color: #9bb7c4;
+  font-size: 11px;
+  margin-top: 2px;
 }
 
 .editor-hint,

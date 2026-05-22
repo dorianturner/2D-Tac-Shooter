@@ -34,6 +34,12 @@ type DragMode =
   | { type: "spawn"; id: PlayerId }
   | { type: "endpoint"; wallId: string; endpoint: "a" | "b" };
 
+interface Blueprint {
+  id: string;
+  name: string;
+  walls: Wall[];
+}
+
 const tools: Array<{ id: Tool; label: string }> = [
   { id: "select", label: "Select" },
   { id: "wall", label: "Wall" },
@@ -47,6 +53,7 @@ const tools: Array<{ id: Tool; label: string }> = [
 ];
 
 const defaultDoorWidth = 64;
+const blueprintStorageKey = "tac-shooter-editor-blueprints";
 
 export class EditorScene extends Phaser.Scene {
   private map: MapDefinition = createBlankMap();
@@ -62,6 +69,9 @@ export class EditorScene extends Phaser.Scene {
   private doorWidth = defaultDoorWidth;
   private undoStack: MapDefinition[] = [];
   private clipboard: { walls: Wall[]; spawns: Spawn[] } | undefined = undefined;
+  private blueprints: Blueprint[] = loadBlueprints();
+  private selectedBlueprintId: string | undefined = undefined;
+  private lastPick: { point: Vec2; ids: string[]; index: number } | undefined = undefined;
   private root: HTMLElement | undefined = undefined;
   private toolbar: HTMLElement | undefined = undefined;
   private properties: HTMLElement | undefined = undefined;
@@ -119,6 +129,8 @@ export class EditorScene extends Phaser.Scene {
           <button data-action="load">Load</button>
         </div>
         <div class="tool-grid"></div>
+        <h2>Blueprints</h2>
+        <div class="blueprint-panel"></div>
         <p class="editor-hint">Wheel zooms. Middle-drag or Alt-drag pans. Shift-click adds to selection. Drag empty space to box-select. Delete removes selected geometry.</p>
       </aside>
       <aside class="editor-right">
@@ -195,7 +207,7 @@ export class EditorScene extends Phaser.Scene {
       return;
     }
 
-    const picked = this.pickWall(point);
+    const picked = this.pickWall(point, false, true);
     if (picked) {
       this.recordUndo();
       this.updateSelection(picked, pointer.event.shiftKey);
@@ -484,8 +496,35 @@ export class EditorScene extends Phaser.Scene {
 
   private renderChrome(): void {
     this.toolbar?.querySelectorAll("button").forEach((button) => button.classList.toggle("active", button.getAttribute("data-tool") === this.tool));
+    this.renderBlueprints();
     this.renderMapProperties();
     this.renderSelectionProperties();
+  }
+
+  private renderBlueprints(): void {
+    const container = this.root?.querySelector<HTMLElement>(".blueprint-panel");
+    if (!container) return;
+    container.innerHTML = `
+      <div class="blueprint-actions">
+        <button data-blueprint-action="save">Save Selection</button>
+        <button data-blueprint-action="place" ${this.selectedBlueprintId ? "" : "disabled"}>Place</button>
+        <button data-blueprint-action="delete" ${this.selectedBlueprintId ? "" : "disabled"}>Delete</button>
+      </div>
+      <div class="blueprint-list">
+        ${this.blueprints.length === 0
+          ? `<span>No blueprints saved.</span>`
+          : this.blueprints.map((blueprint) => `<button class="${blueprint.id === this.selectedBlueprintId ? "active" : ""}" data-blueprint="${blueprint.id}">${escapeAttr(blueprint.name)}<span>${blueprint.walls.length} segment(s)</span></button>`).join("")}
+      </div>
+    `;
+    container.querySelector("[data-blueprint-action='save']")?.addEventListener("click", () => this.saveBlueprint());
+    container.querySelector("[data-blueprint-action='place']")?.addEventListener("click", () => this.placeBlueprint());
+    container.querySelector("[data-blueprint-action='delete']")?.addEventListener("click", () => this.deleteBlueprint());
+    container.querySelectorAll<HTMLButtonElement>("[data-blueprint]").forEach((button) => {
+      button.addEventListener("click", () => {
+        this.selectedBlueprintId = button.dataset.blueprint;
+        this.renderChrome();
+      });
+    });
   }
 
   private renderMapProperties(): void {
@@ -594,13 +633,10 @@ export class EditorScene extends Phaser.Scene {
   }
 
   private updateSelection(wall: Wall, additive: boolean): void {
-    const ids = wall.roomId ? this.map.walls.filter((candidate) => candidate.roomId === wall.roomId).map((candidate) => candidate.id) : [wall.id];
     if (!additive) this.selectedIds.clear();
     if (!additive) this.selectedSpawns.clear();
-    for (const id of ids) {
-      if (additive && this.selectedIds.has(id)) this.selectedIds.delete(id);
-      else this.selectedIds.add(id);
-    }
+    if (additive && this.selectedIds.has(wall.id)) this.selectedIds.delete(wall.id);
+    else this.selectedIds.add(wall.id);
   }
 
   private selectWallsInRect(a: Vec2, b: Vec2, additive: boolean): void {
@@ -617,10 +653,23 @@ export class EditorScene extends Phaser.Scene {
     return [...this.map.spawns].reverse().find((spawn) => distance(point, spawn.position) <= 18);
   }
 
-  private pickWall(point: Vec2, includeDoor = false): Wall | undefined {
-    return [...this.map.walls]
+  private pickWall(point: Vec2, includeDoor = false, cycle = false): Wall | undefined {
+    const candidates = [...this.map.walls]
       .reverse()
-      .find((wall) => (includeDoor || normalizedPreset(wall) !== "door") && distanceToSegment(point, wall.a, wall.b) <= Math.max(12, wall.thickness + 6));
+      .filter((wall) => (includeDoor || normalizedPreset(wall) !== "door") && distanceToSegment(point, wall.a, wall.b) <= Math.max(12, wall.thickness + 6));
+    if (candidates.length === 0) {
+      this.lastPick = undefined;
+      return undefined;
+    }
+    if (!cycle || candidates.length === 1) {
+      this.lastPick = { point, ids: candidates.map((wall) => wall.id), index: 0 };
+      return candidates[0];
+    }
+    const ids = candidates.map((wall) => wall.id);
+    const sameStack = this.lastPick && distance(point, this.lastPick.point) <= Math.max(8, this.map.gridSize ?? 40) && ids.join("|") === this.lastPick.ids.join("|");
+    const index = sameStack ? (this.lastPick!.index + 1) % candidates.length : 0;
+    this.lastPick = { point, ids, index };
+    return candidates[index];
   }
 
   private pickEndpoint(point: Vec2): { wallId: string; endpoint: "a" | "b" } | undefined {
@@ -715,6 +764,66 @@ export class EditorScene extends Phaser.Scene {
     if (this.undoStack.length > 80) this.undoStack.shift();
   }
 
+  private saveBlueprint(): void {
+    const selected = this.map.walls.filter((wall) => this.selectedIds.has(wall.id));
+    if (selected.length === 0) {
+      this.setStatus("Select geometry before saving a blueprint.");
+      return;
+    }
+    const name = window.prompt("Blueprint name", `Blueprint ${this.blueprints.length + 1}`);
+    if (!name) return;
+    const origin = blueprintOrigin(selected);
+    const blueprint: Blueprint = {
+      id: slugifyMapName(name),
+      name,
+      walls: selected.map((wall) => ({
+        ...structuredClone(wall),
+        a: sub(wall.a, origin),
+        b: sub(wall.b, origin),
+        ...(wall.hinge ? { hinge: sub(wall.hinge, origin) } : {}),
+        ...(wall.closedA ? { closedA: sub(wall.closedA, origin) } : {}),
+        ...(wall.closedB ? { closedB: sub(wall.closedB, origin) } : {})
+      }))
+    };
+    this.blueprints = [...this.blueprints.filter((candidate) => candidate.id !== blueprint.id), blueprint];
+    this.selectedBlueprintId = blueprint.id;
+    saveBlueprints(this.blueprints);
+    this.setStatus(`Saved blueprint ${name}.`);
+    this.renderChrome();
+  }
+
+  private placeBlueprint(): void {
+    const blueprint = this.blueprints.find((candidate) => candidate.id === this.selectedBlueprintId);
+    if (!blueprint) return;
+    this.recordUndo();
+    const origin = this.snapPoint(this.pointerWorld);
+    this.selectedIds.clear();
+    this.selectedSpawns.clear();
+    for (const stored of blueprint.walls) {
+      const wall = structuredClone(stored);
+      const prefix = wall.preset ?? "blueprint";
+      wall.id = nextId(prefix, this.map.walls);
+      wall.a = add(origin, wall.a);
+      wall.b = add(origin, wall.b);
+      if (wall.hinge) wall.hinge = add(origin, wall.hinge);
+      if (wall.closedA) wall.closedA = add(origin, wall.closedA);
+      if (wall.closedB) wall.closedB = add(origin, wall.closedB);
+      this.map.walls.push(wall);
+      this.selectedIds.add(wall.id);
+    }
+    this.setStatus(`Placed blueprint ${blueprint.name}.`);
+    this.renderChrome();
+    this.redraw();
+  }
+
+  private deleteBlueprint(): void {
+    if (!this.selectedBlueprintId) return;
+    this.blueprints = this.blueprints.filter((blueprint) => blueprint.id !== this.selectedBlueprintId);
+    this.selectedBlueprintId = undefined;
+    saveBlueprints(this.blueprints);
+    this.renderChrome();
+  }
+
   private zoomAt(pointer: Phaser.Input.Pointer, deltaY: number): void {
     const camera = this.cameras.main;
     const before = camera.getWorldPoint(pointer.x, pointer.y);
@@ -782,6 +891,31 @@ function createBlankMap(): MapDefinition {
     lighting: [],
     notes: ""
   });
+}
+
+function blueprintOrigin(walls: Wall[]): Vec2 {
+  return walls.reduce(
+    (origin, wall) => ({
+      x: Math.min(origin.x, wall.a.x, wall.b.x, wall.hinge?.x ?? Number.POSITIVE_INFINITY, wall.closedA?.x ?? Number.POSITIVE_INFINITY, wall.closedB?.x ?? Number.POSITIVE_INFINITY),
+      y: Math.min(origin.y, wall.a.y, wall.b.y, wall.hinge?.y ?? Number.POSITIVE_INFINITY, wall.closedA?.y ?? Number.POSITIVE_INFINITY, wall.closedB?.y ?? Number.POSITIVE_INFINITY)
+    }),
+    { x: Number.POSITIVE_INFINITY, y: Number.POSITIVE_INFINITY }
+  );
+}
+
+function loadBlueprints(): Blueprint[] {
+  try {
+    const raw = window.localStorage.getItem(blueprintStorageKey);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw) as Blueprint[];
+    return Array.isArray(parsed) ? parsed.map((blueprint) => ({ ...blueprint, walls: blueprint.walls.map(normalizeWallKind) })) : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveBlueprints(blueprints: Blueprint[]): void {
+  window.localStorage.setItem(blueprintStorageKey, JSON.stringify(blueprints));
 }
 
 function toolToPreset(tool: Tool): SegmentPresetId {
