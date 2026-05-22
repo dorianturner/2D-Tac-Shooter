@@ -17,7 +17,7 @@ export const weaponPresets: Record<WeaponPresetId, WeaponDefinition> = {
     id: "sniper",
     name: "Sniper",
     damage: 5,
-    effectiveRange: 820,
+    effectiveRange: Number.POSITIVE_INFINITY,
     fireCooldownTicks: 45,
     magSize: 5,
     visionRange: 420,
@@ -28,14 +28,14 @@ export const weaponPresets: Record<WeaponPresetId, WeaponDefinition> = {
   shotgun: {
     id: "shotgun",
     name: "Shotgun",
-    damage: 5,
+    damage: 1,
     effectiveRange: 190,
     fireCooldownTicks: 32,
     magSize: 6,
     visionRange: 260,
     visionFov: (100 * Math.PI) / 180,
     pelletCount: 7,
-    spreadRadians: (10 * Math.PI) / 180
+    spreadRadians: (30 * Math.PI) / 180
   }
 };
 

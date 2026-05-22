@@ -371,9 +371,15 @@ export class PlayScene extends Phaser.Scene {
 
   private drawAimGuide(origin: Vec2, aim: number): void {
     if (!this.entityLayer) return;
-    const range = this.snapshot ? weaponPresets[this.snapshot.self.weaponId].effectiveRange : 520;
+    const weaponRange = this.snapshot ? weaponPresets[this.snapshot.self.weaponId].effectiveRange : 520;
+    const range = Number.isFinite(weaponRange) ? weaponRange : this.mapPreviewRange();
     const end = { x: origin.x + Math.cos(aim) * range, y: origin.y + Math.sin(aim) * range };
     drawDottedLine(this.entityLayer, origin, end, this.selectedGadget === "none" ? colors.blue : colors.sensor, 0.3, 7, 9);
+  }
+
+  private mapPreviewRange(): number {
+    const bounds = this.welcome?.map.bounds;
+    return bounds ? Math.hypot(bounds.width, bounds.height) * 2 : 1200;
   }
 
   private drawGadgetPreview(origin: Vec2): void {
@@ -619,8 +625,12 @@ function loadoutDetailsHtml(loadout: PlayerLoadoutSelection): string {
     .join(" / ");
   return `
     <div><strong>${playerClass.name}</strong><span>${gadgets || "No gadgets"}</span></div>
-    <div><strong>${weapon.name}</strong><span>DMG ${weapon.damage} | RNG ${weapon.effectiveRange} | MAG ${weapon.magSize} | VISION ${weapon.visionRange}px / ${Math.round((weapon.visionFov * 180) / Math.PI)}deg${weapon.pelletCount > 1 ? ` | ${weapon.pelletCount} pellets` : ""}</span></div>
+    <div><strong>${weapon.name}</strong><span>DMG ${weapon.damage} | RNG ${formatRange(weapon.effectiveRange)} | MAG ${weapon.magSize} | VISION ${weapon.visionRange}px / ${Math.round((weapon.visionFov * 180) / Math.PI)}deg${weapon.pelletCount > 1 ? ` | ${weapon.pelletCount} pellets` : ""}</span></div>
   `;
+}
+
+function formatRange(range: number): string {
+  return Number.isFinite(range) ? `${range}` : "infinite";
 }
 
 function roomToPickable(room: RoomSummary) {

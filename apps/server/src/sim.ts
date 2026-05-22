@@ -799,10 +799,11 @@ function resolveShot(room: RoomState, shooterId: PlayerId): void {
   shooter.ammo -= 1;
   slot.nextFireTick = room.tick + weapon.fireCooldownTicks;
   const origin = { ...shooter.position };
+  const shotRange = Number.isFinite(weapon.effectiveRange) ? weapon.effectiveRange : maxMapShotRange(room.map);
   const hits: Array<ReturnType<typeof resolveHitscan>> = [];
   for (const angle of shotAngles(shooter.aim, weapon.pelletCount, weapon.spreadRadians)) {
-    const rayEnd = add(origin, mul(angleToVector(angle), weapon.effectiveRange));
-    const hit = resolveHitscan(room, shooterId, origin, rayEnd, weapon.effectiveRange);
+    const rayEnd = add(origin, mul(angleToVector(angle), shotRange));
+    const hit = resolveHitscan(room, shooterId, origin, rayEnd, shotRange);
     hits.push(hit);
     const impact: ShotImpact = { id: `${shooterId}-${room.tick}-${room.shotImpacts.length}`, tick: room.tick, shooter: shooterId, origin, end: hit.end, hit: hit.kind, ...(hit.targetId ? { targetId: hit.targetId } : {}), ...(hit.wallId ? { wallId: hit.wallId } : {}), ...(hit.cameraId ? { cameraId: hit.cameraId } : {}), ...(hit.soundSensorId ? { soundSensorId: hit.soundSensorId } : {}) };
     room.shotImpacts.push(impact);
@@ -828,6 +829,10 @@ function resolveShot(room: RoomState, shooterId: PlayerId): void {
       damageSoundSensor(room, hit.soundSensorId, shooterId);
     }
   }
+}
+
+function maxMapShotRange(map: MapDefinition): number {
+  return Math.hypot(map.bounds.width, map.bounds.height) * 2;
 }
 
 function shotAngles(aim: number, pelletCount: number, spreadRadians: number): number[] {

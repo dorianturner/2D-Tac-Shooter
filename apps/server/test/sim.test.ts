@@ -916,7 +916,7 @@ describe("authoritative simulation", () => {
     expect(room.players.p1.gadgets).toMatchObject({ camera: 0, molotov: 2, wall: 3 });
   });
 
-  it("uses selected gun factories for vision and one-shot weapon damage", () => {
+  it("uses selected gun factories for vision and shotgun pellet damage", () => {
     const longMap = testMap();
     longMap.bounds.width = 900;
     longMap.spawns[1]!.position = { x: 430, y: 120 };
@@ -942,8 +942,17 @@ describe("authoritative simulation", () => {
     applyClientMessage(shotgunRoom, "p1", { type: "command", seq: 1, tick: shotgunRoom.tick, move: { x: 0, y: 0 }, aim: 0, fire: true, use: "none" });
     stepRoom(shotgunRoom);
     expect(shotgunRoom.replay.events.filter((event) => event.type === "shot").length).toBeGreaterThan(1);
-    expect(shotgunRoom.replay.events.some((event) => event.type === "kill" && event.shooter === "p1" && event.target === "p2")).toBe(true);
-    expect(shotgunRoom.round.scores.p1).toBe(1);
+    expect(shotgunRoom.players.p2.hp).toBeLessThan(5);
+    expect(shotgunRoom.players.p2.hp).toBeGreaterThan(0);
+    expect(shotgunRoom.round.scores.p1 ?? 0).toBe(0);
+
+    const sniperShotMap = testMap();
+    sniperShotMap.bounds.width = 1600;
+    sniperShotMap.spawns[1]!.position = { x: 1300, y: 120 };
+    const sniperShotRoom = activeRoomWithLoadout(sniperShotMap, { weaponId: "sniper" });
+    applyClientMessage(sniperShotRoom, "p1", { type: "command", seq: 1, tick: sniperShotRoom.tick, move: { x: 0, y: 0 }, aim: 0, fire: true, use: "none" });
+    stepRoom(sniperShotRoom);
+    expect(sniperShotRoom.replay.events.some((event) => event.type === "kill" && event.shooter === "p1" && event.target === "p2")).toBe(true);
   });
 
   it("destroys destructible solid walls after five shots and never destroys doors", () => {

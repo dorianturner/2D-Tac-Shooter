@@ -32,7 +32,10 @@ describe("shared tactical primitives", () => {
   it("keeps shotgun vision aligned with the assault rifle and defines pellets", () => {
     expect(weaponPresets.shotgun.visionRange).toBe(weaponPresets.assault.visionRange);
     expect(weaponPresets.shotgun.visionFov).toBe(weaponPresets.assault.visionFov);
+    expect(weaponPresets.shotgun.damage).toBe(1);
     expect(weaponPresets.shotgun.pelletCount).toBeGreaterThan(1);
+    expect(weaponPresets.shotgun.spreadRadians).toBeGreaterThan((20 * Math.PI) / 180);
+    expect(weaponPresets.sniper.effectiveRange).toBe(Number.POSITIVE_INFINITY);
   });
 
   it("normalizes legacy destructible wall kinds into a property", () => {
