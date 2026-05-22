@@ -103,6 +103,7 @@ export function normalizeWallKind(wall: Wall): Wall {
 export function normalizeMapDefinition(map: MapDefinition): MapDefinition {
   return {
     ...map,
+    ...(map.objective ? { objective: { id: map.objective.id || "objective", position: { ...map.objective.position }, radius: map.objective.radius || 56 } } : {}),
     walls: map.walls.map(normalizeSegment)
   };
 }

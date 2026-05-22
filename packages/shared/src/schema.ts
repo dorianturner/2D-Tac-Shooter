@@ -53,6 +53,12 @@ export const lightNodeSchema = z.object({
   destroyed: z.boolean().optional()
 });
 
+export const objectiveSchema = z.object({
+  id: z.string().min(1),
+  position: vec2,
+  radius: z.number().positive()
+});
+
 export const mapSchema = z.object({
   id: z.string().min(1),
   version: z.number().int().positive(),
@@ -87,6 +93,7 @@ export const mapSchema = z.object({
   ),
   utilityPlacements: z.array(utilityPlacementSchema).optional(),
   lighting: z.array(lightNodeSchema).optional(),
+  objective: objectiveSchema.optional(),
   notes: z.string().optional()
 });
 

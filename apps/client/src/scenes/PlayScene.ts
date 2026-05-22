@@ -2,7 +2,7 @@ import Phaser from "phaser";
 import { distance, isHingedDoorSegment, lineIntersection, normalize, playerClassPresets, weaponPresets, type GadgetKind, type PlayerClassPresetId, type PlayerCommand, type PlayerId, type PlayerLoadoutSelection, type PlayerState, type RoomSummary, type ServerMessage, type ServerSnapshot, type ServerWelcome, type ShotImpact, type Vec2, type Wall, type WeaponPresetId, TICK_RATE } from "@tac/shared";
 import { listMaps, listRooms } from "../editorApi";
 import { mapSummaryToPickable, pickFromList } from "../fuzzyPicker";
-import { colors, drawDeployedCamera, drawFogOfWar, drawMap, drawMolotovZone, drawPlayer, drawSmokeZone, drawSoundSensorZone } from "../render";
+import { colors, drawDeployedCamera, drawFogOfWar, drawMap, drawMolotovZone, drawObjective, drawPlayer, drawSmokeZone, drawSoundSensorZone } from "../render";
 
 const GADGET_RANGES: Record<GadgetKind, number> = { camera: 180, molotov: 220, smoke: 220, wall: 180, sound: 180 };
 const GADGET_RADII: Record<Exclude<GadgetKind, "wall">, number> = { camera: 120, molotov: 55, smoke: 62, sound: 135 };
@@ -288,6 +288,9 @@ export class PlayScene extends Phaser.Scene {
     for (const zone of snapshot.gadgets.molotovs) drawMolotovZone(this.entityLayer, zone, snapshot.tick);
     for (const zone of snapshot.gadgets.smokes) drawSmokeZone(this.entityLayer, zone, snapshot.tick);
     for (const zone of snapshot.gadgets.soundSensors) drawSoundSensorZone(this.entityLayer, zone, snapshot.tick);
+    if (snapshot.round.objective) {
+      drawObjective(this.entityLayer, snapshot.round.objective.position, snapshot.round.objective.radius, snapshot.round.objective.progressTicks / snapshot.round.objective.requiredTicks);
+    }
     for (const detection of snapshot.detections) {
       if (detection.kind !== "sound-area") continue;
       this.entityLayer.lineStyle(2, colors.warning, detection.confidence);
@@ -480,8 +483,9 @@ export class PlayScene extends Phaser.Scene {
   private updateMatchHud(snapshot: ServerSnapshot): void {
     if (!this.welcome) return;
     const round = snapshot.round;
-    const countdown = Math.max(0, Math.ceil(((round.phase === "countdown" ? round.startsAtTick : round.endsAtTick) - snapshot.tick) / TICK_RATE));
-    const time = round.phase === "lobby" ? "waiting for player" : round.phase === "active" ? formatTime(countdown) : round.phase === "countdown" ? `starts in ${countdown}` : "ended";
+    const countdownTarget = round.phase === "countdown" ? round.startsAtTick : round.phase === "overtime" ? round.overtimeEndsAtTick ?? round.endsAtTick : round.endsAtTick;
+    const countdown = Math.max(0, Math.ceil((countdownTarget - snapshot.tick) / TICK_RATE));
+    const time = round.phase === "lobby" ? "waiting for player" : round.phase === "active" ? formatTime(countdown) : round.phase === "overtime" ? `OT ${formatTime(countdown)}` : round.phase === "countdown" ? `starts in ${countdown}` : "ended";
     const roundResult = round.winner ? ` | round ${round.winner === "draw" ? "draw" : `${round.winner.toUpperCase()} won`}` : "";
     const score = Object.entries(round.scores).map(([id, value]) => `${id.toUpperCase()} ${value}`).join(" / ");
     const doorDebug = snapshot.debug
@@ -517,6 +521,7 @@ export class PlayScene extends Phaser.Scene {
         <button class="${this.selectedGadget === "sound" ? "selected" : ""}" data-gadget="sound">SND ${snapshot.self.gadgets.sound}</button>
       </div>
       <div class="hud-meta">${this.welcome.roomId} | ${snapshot.playerId.toUpperCase()} | ${snapshot.self.className} | ${snapshot.self.weaponName} | ${this.welcome.map.name}${roundResult}</div>
+      ${round.objective ? `<div class="hud-meta">Objective ${round.objective.owner ? `${round.objective.owner.toUpperCase()} ${Math.floor((round.objective.progressTicks / round.objective.requiredTicks) * 100)}%` : "neutral"}</div>` : ""}
       <div class="hud-meta">${snapshot.nextLoadout ? `Next round: ${formatLoadout(snapshot.nextLoadout)}` : "Loadout changes at top apply next round"}</div>
       ${doorDebug ? `<div class="hud-meta">${doorDebug}</div>` : ""}
     `);

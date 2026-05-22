@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { createWall, distanceToSegment, type MapDefinition } from "@tac/shared";
 import { applyClientMessage, createRoom, isExpiredUnfilledLobby, joinRoom, snapshotFor, stepRoom } from "../src/sim.js";
+import { OBJECTIVE_CAPTURE_TICKS, ROUND_TICKS } from "../src/sim/config.js";
 
 describe("authoritative simulation", () => {
   it("filters hidden opponents out of snapshots", () => {
@@ -69,6 +70,37 @@ describe("authoritative simulation", () => {
     expect(room.round.phase).toBe("lobby");
     expect(snapshotFor(room, "p1").round.phase).toBe("lobby");
     expect(room.round.matchWinner).toBeUndefined();
+  });
+
+  it("enters objective overtime after sixty seconds and awards a capture after eight seconds", () => {
+    const map = testMap();
+    map.objective = { id: "objective", position: { x: 150, y: 120 }, radius: 32 };
+    const room = activeRoom(map);
+    expect(room.round.endsAtTick - room.round.startsAtTick).toBe(ROUND_TICKS);
+    room.tick = room.round.endsAtTick - 1;
+    stepRoom(room);
+    expect(room.round.phase).toBe("overtime");
+    expect(room.round.objective?.requiredTicks).toBe(OBJECTIVE_CAPTURE_TICKS);
+
+    room.players.p1.position = { x: 150, y: 120 };
+    room.players.p2.position = { x: 260, y: 120 };
+    for (let i = 0; i < OBJECTIVE_CAPTURE_TICKS; i += 1) stepRoom(room);
+
+    expect(room.round.winner).toBe("p1");
+    expect(room.round.reason).toBe("objective");
+    expect(room.round.scores.p1).toBe(1);
+  });
+
+  it("ends overtime as a draw when no objective is captured", () => {
+    const map = testMap();
+    map.objective = { id: "objective", position: { x: 150, y: 120 }, radius: 32 };
+    const room = activeRoom(map);
+    room.tick = room.round.endsAtTick - 1;
+    stepRoom(room);
+    room.tick = room.round.overtimeEndsAtTick! - 1;
+    stepRoom(room);
+    expect(room.round.winner).toBe("draw");
+    expect(room.round.reason).toBe("timer");
   });
 
   it("initializes and moves hinged doors when pushed", () => {

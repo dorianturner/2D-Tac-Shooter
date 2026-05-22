@@ -63,6 +63,8 @@ import {
   PLAYER_SPEED,
   POST_GADGET_LOCKOUT_TICKS,
   RELOAD_TICKS,
+  OBJECTIVE_CAPTURE_TICKS,
+  OVERTIME_TICKS,
   ROUND_COUNTDOWN_TICKS,
   ROUND_TICKS,
   SMOKE_RANGE,
@@ -369,7 +371,7 @@ export function stepRoom(room: RoomState): void {
     delete room.round.nextRoundStartsAtTick;
     pushEvent(room, { type: "round-start", tick: room.tick });
   }
-  if (room.round.phase !== "active") {
+  if (!isPlayablePhase(room.round.phase)) {
     integrateDoors(room);
     rejectPendingActions(room, "round-inactive");
     return;
@@ -404,8 +406,14 @@ export function stepRoom(room: RoomState): void {
   resolveSensors(room);
   resolveSoundSensors(room);
   resolveMolotovDamage(room);
+  resolveObjectiveCapture(room);
   room.detections = room.detections.filter((detection) => detection.expiresAtTick >= room.tick);
-  if (room.tick >= room.round.endsAtTick) finishRound(room, "draw", "timer");
+  if (room.round.phase === "active" && room.tick >= room.round.endsAtTick) enterOvertimeOrDraw(room);
+  if (room.round.phase === "overtime" && (room.round.overtimeEndsAtTick ?? 0) <= room.tick) finishRound(room, "draw", "timer");
+}
+
+function isPlayablePhase(phase: ServerSnapshot["round"]["phase"]): boolean {
+  return phase === "active" || phase === "overtime";
 }
 
 export function initializeRuntimeMap(map: MapDefinition): MapDefinition {
@@ -888,10 +896,52 @@ function damageSoundSensor(room: RoomState, sensorId: string, _shooterId: Player
   sensor.destroyed = true;
 }
 
-function finishRound(room: RoomState, winner: PlayerId | "draw", reason: "kill" | "timer"): void {
+function enterOvertimeOrDraw(room: RoomState): void {
+  const objective = room.map.objective;
+  if (!objective) {
+    finishRound(room, "draw", "timer");
+    return;
+  }
+  room.round.phase = "overtime";
+  room.round.overtimeEndsAtTick = room.tick + OVERTIME_TICKS;
+  room.round.objective = {
+    position: { ...objective.position },
+    radius: objective.radius,
+    progressTicks: 0,
+    requiredTicks: OBJECTIVE_CAPTURE_TICKS
+  };
+}
+
+function resolveObjectiveCapture(room: RoomState): void {
+  if (room.round.phase !== "overtime" || !room.round.objective) return;
+  const objective = room.round.objective;
+  const inside = Object.values(room.players).filter((player) => player.alive && distance(player.position, objective.position) <= objective.radius);
+  if (inside.length === 0) {
+    delete objective.owner;
+    objective.progressTicks = 0;
+    return;
+  }
+  const teams = new Set(inside.map((player) => player.team));
+  if (teams.size > 1) {
+    delete objective.owner;
+    objective.progressTicks = 0;
+    return;
+  }
+  const owner = inside[0]!.id;
+  if (objective.owner !== owner) {
+    objective.owner = owner;
+    objective.progressTicks = 0;
+  }
+  objective.progressTicks += 1;
+  if (objective.progressTicks >= objective.requiredTicks) finishRound(room, owner, "objective");
+}
+
+function finishRound(room: RoomState, winner: PlayerId | "draw", reason: "kill" | "timer" | "objective"): void {
   if (winner !== "draw") room.round.scores[winner] = (room.round.scores[winner] ?? 0) + 1;
   room.round.winner = winner;
   room.round.reason = reason;
+  delete room.round.objective;
+  delete room.round.overtimeEndsAtTick;
   pushEvent(room, { type: "round-end", tick: room.tick, winner, reason });
   if (winner !== "draw" && (room.round.scores[winner] ?? 0) >= 2) {
     room.round.phase = "ended";

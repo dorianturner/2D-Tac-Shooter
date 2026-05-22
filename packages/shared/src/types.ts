@@ -1,6 +1,6 @@
 export type Team = "blue" | "orange";
 export type PlayerId = `p${number}`;
-export type RoundPhase = "lobby" | "countdown" | "active" | "ended";
+export type RoundPhase = "lobby" | "countdown" | "active" | "overtime" | "ended";
 export type SensorKind = "camera" | "motion" | "sound";
 export type UtilityKind = "emp" | "breach" | "fake-noise" | "smoke" | "flash" | "signal-spoof";
 export type SegmentPresetId = "wall" | "window" | "mesh" | "breakable-wall" | "door" | "deployable-wall";
@@ -90,6 +90,12 @@ export interface LightNode {
   destroyed?: boolean;
 }
 
+export interface ObjectiveDefinition {
+  id: string;
+  position: Vec2;
+  radius: number;
+}
+
 export interface MapDefinition {
   id: string;
   version: number;
@@ -102,6 +108,7 @@ export interface MapDefinition {
   sensors: SensorDefinition[];
   utilityPlacements?: UtilityPlacement[];
   lighting?: LightNode[];
+  objective?: ObjectiveDefinition;
   notes?: string;
 }
 
@@ -229,10 +236,18 @@ export interface RoundState {
   scores: Record<PlayerId, number>;
   startsAtTick: number;
   endsAtTick: number;
+  overtimeEndsAtTick?: number;
   nextRoundStartsAtTick?: number;
+  objective?: {
+    position: Vec2;
+    radius: number;
+    owner?: PlayerId;
+    progressTicks: number;
+    requiredTicks: number;
+  };
   winner?: PlayerId | "draw";
   matchWinner?: PlayerId;
-  reason?: "kill" | "timer";
+  reason?: "kill" | "timer" | "objective";
 }
 
 export interface ShotImpact {
@@ -300,7 +315,7 @@ export type AuthoritativeEvent =
   | { type: "smoke-deployed"; tick: number; playerId: PlayerId; smokeId: string }
   | { type: "deployable-wall-deployed"; tick: number; playerId: PlayerId; wallId: string }
   | { type: "sound-sensor-deployed"; tick: number; playerId: PlayerId; sensorId: string }
-  | { type: "round-end"; tick: number; winner: PlayerId | "draw"; reason: "kill" | "timer" };
+  | { type: "round-end"; tick: number; winner: PlayerId | "draw"; reason: "kill" | "timer" | "objective" };
 
 export interface ReplayLog {
   mapId: string;

@@ -24,6 +24,22 @@ export function drawMap(g: Phaser.GameObjects.Graphics, map: MapDefinition): voi
   for (let x = 0; x <= map.bounds.width; x += gridSize) g.lineBetween(x, 0, x, map.bounds.height);
   for (let y = 0; y <= map.bounds.height; y += gridSize) g.lineBetween(0, y, map.bounds.width, y);
   for (const wall of map.walls) drawWall(g, wall);
+  if (map.objective) drawObjective(g, map.objective.position, map.objective.radius, 0);
+}
+
+export function drawObjective(g: Phaser.GameObjects.Graphics, position: Vec2, radius: number, progress = 0): void {
+  g.lineStyle(2, colors.destructible, 0.76);
+  g.strokeCircle(position.x, position.y, radius);
+  g.fillStyle(colors.destructible, 0.08);
+  g.fillCircle(position.x, position.y, radius);
+  if (progress > 0) {
+    g.lineStyle(4, colors.warning, 0.9);
+    g.beginPath();
+    g.arc(position.x, position.y, radius + 5, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * Math.min(1, progress), false);
+    g.strokePath();
+  }
+  g.fillStyle(colors.destructible, 0.9);
+  g.fillCircle(position.x, position.y, 5);
 }
 
 export function drawWall(g: Phaser.GameObjects.Graphics, wall: Wall): void {

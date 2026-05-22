@@ -24,7 +24,7 @@ import { listMaps, loadMap, saveMap } from "../editorApi";
 import { mapSummaryToPickable, pickFromList } from "../fuzzyPicker";
 import { colors } from "../render";
 
-type Tool = "select" | "wall" | "window" | "mesh" | "breakable-wall" | "door" | "room" | "p1-spawn" | "p2-spawn";
+type Tool = "select" | "wall" | "window" | "mesh" | "breakable-wall" | "door" | "room" | "objective" | "p1-spawn" | "p2-spawn";
 type DragMode =
   | { type: "none" }
   | { type: "pan"; previous: Vec2 }
@@ -32,6 +32,7 @@ type DragMode =
   | { type: "select-box"; start: Vec2; current: Vec2 }
   | { type: "move"; previous: Vec2 }
   | { type: "spawn"; id: PlayerId }
+  | { type: "objective" }
   | { type: "endpoint"; wallId: string; endpoint: "a" | "b" };
 
 interface Blueprint {
@@ -48,6 +49,7 @@ const tools: Array<{ id: Tool; label: string }> = [
   { id: "breakable-wall", label: "Breakable" },
   { id: "door", label: "Door" },
   { id: "room", label: "Room" },
+  { id: "objective", label: "Objective" },
   { id: "p1-spawn", label: "P1 Spawn" },
   { id: "p2-spawn", label: "P2 Spawn" }
 ];
@@ -63,6 +65,7 @@ export class EditorScene extends Phaser.Scene {
   private tool: Tool = "select";
   private selectedIds = new Set<string>();
   private selectedSpawns = new Set<PlayerId>();
+  private objectiveSelected = false;
   private drag: DragMode = { type: "none" };
   private pointerWorld: Vec2 = { x: 0, y: 0 };
   private snap = true;
@@ -180,6 +183,11 @@ export class EditorScene extends Phaser.Scene {
       this.placeSpawn(this.tool === "p1-spawn" ? "p1" : "p2", point);
       return;
     }
+    if (this.tool === "objective") {
+      this.recordUndo();
+      this.placeObjective(point);
+      return;
+    }
     if (this.tool === "wall" || this.tool === "window" || this.tool === "mesh" || this.tool === "breakable-wall" || this.tool === "room") {
       this.drag = { type: "create", start: point };
       return;
@@ -190,6 +198,7 @@ export class EditorScene extends Phaser.Scene {
       this.recordUndo();
       this.selectedIds.clear();
       this.selectedSpawns = new Set([spawn.id]);
+      this.objectiveSelected = false;
       this.drag = { type: "spawn", id: spawn.id };
       this.renderChrome();
       this.redraw();
@@ -201,7 +210,19 @@ export class EditorScene extends Phaser.Scene {
       this.recordUndo();
       this.selectedIds = new Set([handle.wallId]);
       this.selectedSpawns.clear();
+      this.objectiveSelected = false;
       this.drag = { type: "endpoint", wallId: handle.wallId, endpoint: handle.endpoint };
+      this.renderChrome();
+      this.redraw();
+      return;
+    }
+
+    if (this.pickObjective(point)) {
+      this.recordUndo();
+      this.selectedIds.clear();
+      this.selectedSpawns.clear();
+      this.objectiveSelected = true;
+      this.drag = { type: "objective" };
       this.renderChrome();
       this.redraw();
       return;
@@ -215,6 +236,7 @@ export class EditorScene extends Phaser.Scene {
     } else {
       if (!pointer.event.shiftKey) this.selectedIds.clear();
       if (!pointer.event.shiftKey) this.selectedSpawns.clear();
+      if (!pointer.event.shiftKey) this.objectiveSelected = false;
       this.drag = { type: "select-box", start: point, current: point };
     }
     this.renderChrome();
@@ -239,6 +261,8 @@ export class EditorScene extends Phaser.Scene {
       this.drag.previous = point;
     } else if (this.drag.type === "spawn") {
       this.placeSpawn(this.drag.id, point, false);
+    } else if (this.drag.type === "objective") {
+      this.placeObjective(point, false);
     } else if (this.drag.type === "endpoint") {
       const wall = this.findWall(this.drag.wallId);
       if (wall) wall[this.drag.endpoint] = point;
@@ -274,6 +298,7 @@ export class EditorScene extends Phaser.Scene {
     this.map.walls = preset === "window" || preset === "mesh" ? replaceWallSection(this.map.walls, wall) : [...this.map.walls, wall];
     this.selectedIds = new Set([wall.id]);
     this.selectedSpawns.clear();
+    this.objectiveSelected = false;
   }
 
   private createRoomWalls(a: Vec2, b: Vec2): void {
@@ -296,6 +321,7 @@ export class EditorScene extends Phaser.Scene {
     this.map.walls = [...this.map.walls, ...walls];
     this.selectedIds = new Set(walls.map((wall) => wall.id));
     this.selectedSpawns.clear();
+    this.objectiveSelected = false;
   }
 
   private insertDoor(point: Vec2): void {
@@ -313,6 +339,7 @@ export class EditorScene extends Phaser.Scene {
     this.map.walls = nextWalls;
     this.selectedIds = new Set([`${prefix}-door`]);
     this.selectedSpawns.clear();
+    this.objectiveSelected = false;
     this.renderChrome();
     this.redraw();
   }
@@ -333,10 +360,28 @@ export class EditorScene extends Phaser.Scene {
     if (select) {
       this.selectedIds.clear();
       this.selectedSpawns = new Set([id]);
+      this.objectiveSelected = false;
       this.tool = "select";
     }
     this.renderChrome();
     this.redraw();
+  }
+
+  private placeObjective(position: Vec2, select = true): void {
+    this.map.objective = { id: "objective", position, radius: this.map.objective?.radius ?? 56 };
+    if (select) {
+      this.selectedIds.clear();
+      this.selectedSpawns.clear();
+      this.objectiveSelected = true;
+      this.tool = "select";
+    }
+    this.renderChrome();
+    this.redraw();
+  }
+
+  private setObjectiveRadius(radius: number): void {
+    const position = this.map.objective?.position ?? { x: this.map.bounds.width / 2, y: this.map.bounds.height / 2 };
+    this.map.objective = { id: "objective", position, radius };
   }
 
   private setTeamSize(teamSize: number): void {
@@ -350,11 +395,13 @@ export class EditorScene extends Phaser.Scene {
   }
 
   private deleteSelected(): void {
-    if (this.selectedIds.size === 0 && this.selectedSpawns.size === 0) return;
+    if (this.selectedIds.size === 0 && this.selectedSpawns.size === 0 && !this.objectiveSelected) return;
     this.recordUndo();
     this.map.walls = deleteWallsById(this.map.walls, this.selectedIds);
+    if (this.objectiveSelected) delete this.map.objective;
     this.selectedIds.clear();
     this.selectedSpawns.clear();
+    this.objectiveSelected = false;
     this.renderChrome();
     this.redraw();
   }
@@ -367,6 +414,7 @@ export class EditorScene extends Phaser.Scene {
     this.overlay.clear();
     for (const wall of this.map.walls) this.drawEditorWall(wall);
     this.drawSpawns();
+    this.drawObjective();
     this.drawCreationPreview();
     this.drawDoorPreview();
     this.drawSelectionBox();
@@ -467,6 +515,18 @@ export class EditorScene extends Phaser.Scene {
     }
   }
 
+  private drawObjective(): void {
+    const objective = this.map.objective;
+    if (!objective) return;
+    this.overlay!.lineStyle(this.objectiveSelected ? 4 : 2, this.objectiveSelected ? colors.warning : colors.destructible, 0.9);
+    this.overlay!.strokeCircle(objective.position.x, objective.position.y, objective.radius);
+    this.overlay!.fillStyle(colors.destructible, 0.12);
+    this.overlay!.fillCircle(objective.position.x, objective.position.y, objective.radius);
+    this.overlay!.fillStyle(colors.destructible, 0.88);
+    this.overlay!.fillCircle(objective.position.x, objective.position.y, 6);
+    this.label(objective.position.x + 12, objective.position.y - 10, "OBJECTIVE");
+  }
+
   private drawCreationPreview(): void {
     if (this.drag.type !== "create") return;
     const preset = toolToPreset(this.tool);
@@ -546,6 +606,7 @@ export class EditorScene extends Phaser.Scene {
       ${numberField("bounds.height", this.map.bounds.height)}
       ${numberField("gridSize", this.map.gridSize ?? 40)}
       ${numberField("teamSize", teamSizeFromSpawns(this.map.spawns))}
+      ${numberField("objectiveRadius", this.map.objective?.radius ?? 56)}
       ${numberField("doorWidth", this.doorWidth)}
       <label class="check-row">snap to grid <input type="checkbox" data-map-field="snap" ${this.snap ? "checked" : ""}></label>
     `;
@@ -558,6 +619,22 @@ export class EditorScene extends Phaser.Scene {
     if (!this.properties) return;
     const selected = this.map.walls.filter((wall) => this.selectedIds.has(wall.id));
     const selectedSpawn = this.map.spawns.find((spawn) => this.selectedSpawns.has(spawn.id));
+    if (this.objectiveSelected && this.map.objective) {
+      this.properties.innerHTML = `
+        <p>Objective</p>
+        ${numberField("objective.position.x", this.map.objective.position.x)}
+        ${numberField("objective.position.y", this.map.objective.position.y)}
+        ${numberField("objective.radius", this.map.objective.radius)}
+      `;
+      this.properties.querySelectorAll<HTMLInputElement>("[data-field]").forEach((input) => {
+        onEditorControlCommit(input, () => {
+          this.recordUndo();
+          this.applyObjectiveField(input.dataset.field!, Number(input.value));
+          this.redraw();
+        });
+      });
+      return;
+    }
     if (selectedSpawn) {
       this.properties.innerHTML = `
         <p>${selectedSpawn.id.toUpperCase()} spawn</p>
@@ -638,15 +715,24 @@ export class EditorScene extends Phaser.Scene {
     else if (field === "name") this.map.name = input.value;
     else if (field === "gridSize") this.map.gridSize = Math.max(4, Number(input.value) || 40);
     else if (field === "teamSize") this.setTeamSize(Math.max(1, Math.min(8, Number(input.value) || 1)));
+    else if (field === "objectiveRadius") this.setObjectiveRadius(Math.max(12, Number(input.value) || 56));
     else if (field === "doorWidth") this.doorWidth = Math.max(8, Number(input.value) || defaultDoorWidth);
     else if (field === "bounds.width") this.map.bounds.width = Math.max(80, Number(input.value) || this.map.bounds.width);
     else if (field === "bounds.height") this.map.bounds.height = Math.max(80, Number(input.value) || this.map.bounds.height);
     this.redraw();
   }
 
+  private applyObjectiveField(field: string, value: number): void {
+    if (!this.map.objective) return;
+    if (field === "objective.position.x") this.map.objective.position.x = value;
+    if (field === "objective.position.y") this.map.objective.position.y = value;
+    if (field === "objective.radius") this.map.objective.radius = Math.max(12, value);
+  }
+
   private updateSelection(wall: Wall, additive: boolean): void {
     if (!additive) this.selectedIds.clear();
     if (!additive) this.selectedSpawns.clear();
+    if (!additive) this.objectiveSelected = false;
     if (additive && this.selectedIds.has(wall.id)) this.selectedIds.delete(wall.id);
     else this.selectedIds.add(wall.id);
   }
@@ -656,6 +742,7 @@ export class EditorScene extends Phaser.Scene {
     const max = { x: Math.max(a.x, b.x), y: Math.max(a.y, b.y) };
     if (!additive) this.selectedIds.clear();
     if (!additive) this.selectedSpawns.clear();
+    if (!additive) this.objectiveSelected = false;
     for (const wall of this.map.walls) {
       if (wallIntersectsRect(wall, min, max)) this.selectedIds.add(wall.id);
     }
@@ -663,6 +750,10 @@ export class EditorScene extends Phaser.Scene {
 
   private pickSpawn(point: Vec2): Spawn | undefined {
     return [...this.map.spawns].reverse().find((spawn) => distance(point, spawn.position) <= 18);
+  }
+
+  private pickObjective(point: Vec2): boolean {
+    return Boolean(this.map.objective && distance(point, this.map.objective.position) <= Math.max(18, this.map.objective.radius));
   }
 
   private pickWall(point: Vec2, includeDoor = false, cycle = false): Wall | undefined {
@@ -709,6 +800,7 @@ export class EditorScene extends Phaser.Scene {
       this.map = normalizeMap(await loadMap(choice.id));
       this.selectedIds.clear();
       this.selectedSpawns.clear();
+      this.objectiveSelected = false;
       this.setStatus(`Loaded ${this.map.name}`);
       this.renderChrome();
       this.redraw();
@@ -733,6 +825,7 @@ export class EditorScene extends Phaser.Scene {
     this.map = normalizeMap(previous);
     this.selectedIds.clear();
     this.selectedSpawns.clear();
+    this.objectiveSelected = false;
     this.drag = { type: "none" };
     this.setStatus("Undid last edit.");
     this.renderChrome();
@@ -753,6 +846,7 @@ export class EditorScene extends Phaser.Scene {
     const offset = this.map.gridSize ?? 40;
     this.selectedIds.clear();
     this.selectedSpawns.clear();
+    this.objectiveSelected = false;
     for (const copied of this.clipboard.walls) {
       const wall = structuredClone(copied);
       wall.id = nextId(wall.preset ?? "wall", this.map.walls);
@@ -872,6 +966,7 @@ function normalizeMap(map: MapDefinition): MapDefinition {
     rooms: map.rooms ?? [],
     utilityPlacements: map.utilityPlacements ?? [],
     lighting: map.lighting ?? [],
+    ...(map.objective ? { objective: { id: map.objective.id || "objective", position: { ...map.objective.position }, radius: map.objective.radius || 56 } } : {}),
     notes: map.notes ?? "",
     walls: map.walls.map(normalizeWallKind)
   };

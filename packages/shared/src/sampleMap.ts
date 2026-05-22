@@ -24,6 +24,7 @@ export const sampleMap: MapDefinition = {
     { id: "p1", team: "blue", position: { x: 180, y: 320 }, angle: 0 },
     { id: "p2", team: "orange", position: { x: 780, y: 320 }, angle: Math.PI }
   ],
+  objective: { id: "objective", position: { x: 480, y: 320 }, radius: 56 },
   sensors: [
     { id: "blue-camera", owner: "p1", kind: "camera", position: { x: 330, y: 150 }, angle: 0.35, range: 260, fov: Math.PI / 2.6 },
     { id: "orange-motion", owner: "p2", kind: "motion", position: { x: 650, y: 490 }, angle: Math.PI, range: 210, fov: Math.PI * 2 }

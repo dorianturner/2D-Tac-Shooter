@@ -39,7 +39,9 @@ export const SOUND_SENSOR_HIT_RADIUS = 8;
 export const POST_GADGET_LOCKOUT_TICKS = Math.round(TICK_RATE * 0.4);
 
 export const ROUND_COUNTDOWN_TICKS = 45;
-export const ROUND_TICKS = 90 * TICK_RATE;
+export const ROUND_TICKS = 60 * TICK_RATE;
+export const OVERTIME_TICKS = 30 * TICK_RATE;
+export const OBJECTIVE_CAPTURE_TICKS = 8 * TICK_RATE;
 export const DOOR_MAX_ANGLE = 1.92;
 export const DOOR_DAMPING = 0.68;
 export const DOOR_PUSH_STRENGTH = 0.034;
