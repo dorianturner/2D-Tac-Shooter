@@ -822,6 +822,7 @@ function resolveShot(room: RoomState, shooterId: PlayerId): void {
         return;
       }
     } else if (hit.kind === "wall" && hit.wallId) {
+      applyDoorShotImpulse(room, hit.wallId, origin, hit.end);
       damageWall(room, hit.wallId, shooterId);
     } else if (hit.kind === "camera" && hit.cameraId) {
       damageCamera(room, hit.cameraId, shooterId);
@@ -833,6 +834,22 @@ function resolveShot(room: RoomState, shooterId: PlayerId): void {
 
 function maxMapShotRange(map: MapDefinition): number {
   return Math.hypot(map.bounds.width, map.bounds.height) * 2;
+}
+
+function applyDoorShotImpulse(room: RoomState, wallId: string, origin: Vec2, impact: Vec2): boolean {
+  const door = room.map.walls.find((candidate) => candidate.id === wallId);
+  if (!door || !isHingedDoorSegment(door) || !door.hinge || door.destroyed) return false;
+  const shotDirection = normalize({ x: impact.x - origin.x, y: impact.y - origin.y });
+  const hingeToImpact = { x: impact.x - door.hinge.x, y: impact.y - door.hinge.y };
+  const torque = cross(hingeToImpact, shotDirection);
+  if (Math.abs(torque) < 0.001) return false;
+  const panelLength = Math.max(1, distance(door.hinge, door.b));
+  const lever = Math.max(0.25, Math.min(1, distance(door.hinge, impact) / panelLength));
+  const impulse = Math.sign(torque) * DOOR_MAX_ANGULAR_SPEED * 0.8 * lever;
+  door.angularVelocity = clampDoorSpeed((door.angularVelocity ?? 0) + impulse);
+  delete door.targetAngle;
+  door.lastPushTick = room.tick;
+  return true;
 }
 
 function shotAngles(aim: number, pelletCount: number, spreadRadians: number): number[] {

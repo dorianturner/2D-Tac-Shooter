@@ -361,6 +361,21 @@ describe("authoritative simulation", () => {
     expect(Math.abs(door.currentAngle ?? 1)).toBeLessThan(0.08);
   });
 
+  it("applies bullet impulse to hinged doors", () => {
+    const map = testMap();
+    map.walls.push(createWall("shot-door", "door", { x: 120, y: 90 }, { x: 120, y: 150 }, 8));
+    const room = activeRoom(map);
+    room.players.p1.position = { x: 50, y: 120 };
+    room.players.p2.position = { x: 250, y: 220 };
+    const door = room.map.walls.find((wall) => wall.id === "shot-door")!;
+    applyClientMessage(room, "p1", { type: "command", seq: 1, tick: room.tick, move: { x: 0, y: 0 }, aim: 0, fire: true, use: "none" });
+    stepRoom(room);
+    expect(room.replay.events.some((event) => event.type === "shot" && event.impact.wallId === "shot-door")).toBe(true);
+    expect(Math.abs(door.angularVelocity ?? 0)).toBeGreaterThan(0);
+    for (let i = 0; i < 4; i += 1) stepRoom(room);
+    expect(Math.abs(door.currentAngle ?? 0)).toBeGreaterThan(0.02);
+  });
+
   it("rejects door toggle when no door is nearby", () => {
     const map = testMap();
     map.walls.push(createWall("far-door", "door", { x: 220, y: 40 }, { x: 220, y: 100 }, 8));
