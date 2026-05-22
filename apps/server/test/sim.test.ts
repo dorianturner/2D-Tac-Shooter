@@ -363,8 +363,8 @@ describe("authoritative simulation", () => {
 
   it("applies bullet impulse to hinged doors", () => {
     const map = testMap();
-    map.walls.push(createWall("shot-door", "door", { x: 120, y: 90 }, { x: 120, y: 150 }, 8));
-    const room = activeRoom(map);
+    map.walls.push(createWall("shot-door", "door", { x: 120, y: 70 }, { x: 120, y: 170 }, 8));
+    const room = activeRoomWithLoadout(map, { weaponId: "assault" });
     room.players.p1.position = { x: 50, y: 120 };
     room.players.p2.position = { x: 250, y: 220 };
     const door = room.map.walls.find((wall) => wall.id === "shot-door")!;
@@ -372,8 +372,33 @@ describe("authoritative simulation", () => {
     stepRoom(room);
     expect(room.replay.events.some((event) => event.type === "shot" && event.impact.wallId === "shot-door")).toBe(true);
     expect(Math.abs(door.angularVelocity ?? 0)).toBeGreaterThan(0);
+    expect(Math.abs(door.targetAngle ?? 0)).toBeGreaterThan(0.3);
+    expect(Math.abs(door.targetAngle ?? 0)).toBeLessThan(1);
     for (let i = 0; i < 4; i += 1) stepRoom(room);
     expect(Math.abs(door.currentAngle ?? 0)).toBeGreaterThan(0.02);
+  });
+
+  it("fully opens doors from one sniper hit or enough shotgun pellets", () => {
+    const sniperMap = testMap();
+    sniperMap.walls.push(createWall("sniper-door", "door", { x: 120, y: 70 }, { x: 120, y: 170 }, 8));
+    const sniperRoom = activeRoomWithLoadout(sniperMap, { weaponId: "sniper" });
+    sniperRoom.players.p1.position = { x: 50, y: 120 };
+    sniperRoom.players.p2.position = { x: 250, y: 220 };
+    const sniperDoor = sniperRoom.map.walls.find((wall) => wall.id === "sniper-door")!;
+    applyClientMessage(sniperRoom, "p1", { type: "command", seq: 1, tick: sniperRoom.tick, move: { x: 0, y: 0 }, aim: 0, fire: true, use: "none" });
+    stepRoom(sniperRoom);
+    expect(Math.abs(sniperDoor.targetAngle ?? 0)).toBeCloseTo(1.92, 2);
+
+    const shotgunMap = testMap();
+    shotgunMap.walls.push(createWall("shotgun-door", "door", { x: 120, y: 70 }, { x: 120, y: 170 }, 8));
+    const shotgunRoom = activeRoomWithLoadout(shotgunMap, { weaponId: "shotgun" });
+    shotgunRoom.players.p1.position = { x: 50, y: 120 };
+    shotgunRoom.players.p2.position = { x: 250, y: 220 };
+    const shotgunDoor = shotgunRoom.map.walls.find((wall) => wall.id === "shotgun-door")!;
+    applyClientMessage(shotgunRoom, "p1", { type: "command", seq: 1, tick: shotgunRoom.tick, move: { x: 0, y: 0 }, aim: 0, fire: true, use: "none" });
+    stepRoom(shotgunRoom);
+    expect(shotgunRoom.replay.events.filter((event) => event.type === "shot" && event.impact.wallId === "shotgun-door").length).toBeGreaterThanOrEqual(5);
+    expect(Math.abs(shotgunDoor.targetAngle ?? 0)).toBeCloseTo(1.92, 2);
   });
 
   it("rejects door toggle when no door is nearby", () => {
