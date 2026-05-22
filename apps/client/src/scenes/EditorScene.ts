@@ -244,8 +244,9 @@ export class EditorScene extends Phaser.Scene {
     } else if (this.drag.type === "select-box") {
       this.selectWallsInRect(this.drag.start, this.drag.current, pointer.event.shiftKey);
     }
+    const wasSelectBox = this.drag.type === "select-box";
     this.drag = { type: "none" };
-    this.renderChrome();
+    if (wasSelectBox) this.renderChrome();
     this.redraw();
   }
 
@@ -361,7 +362,12 @@ export class EditorScene extends Phaser.Scene {
     
     // Draw destructible walls completely orange
     if (wall.destructible) {
-      this.overlay!.lineStyle(selected ? wall.thickness + 7 : wall.thickness, selected ? colors.warning : colors.destructible, 0.98);
+      // Draw the wall normally first
+      const color = kind === "door" ? colors.sensor : colors.wall;
+      this.overlay!.lineStyle(selected ? wall.thickness + 7 : wall.thickness, selected ? colors.warning : color, selected ? 0.95 : 0.9);
+      this.overlay!.lineBetween(wall.a.x, wall.a.y, wall.b.x, wall.b.y);
+      // Then draw a thin orange outline on top
+      this.overlay!.lineStyle(2, colors.destructible, 0.95);
       this.overlay!.lineBetween(wall.a.x, wall.a.y, wall.b.x, wall.b.y);
     } else if (kind === "mesh") {
       // Draw mesh walls as X's
