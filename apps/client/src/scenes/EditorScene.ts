@@ -340,11 +340,13 @@ export class EditorScene extends Phaser.Scene {
   }
 
   private setTeamSize(teamSize: number): void {
-    const existing = new Map(this.map.spawns.map((spawn) => [spawn.id, spawn]));
-    const blue = Array.from({ length: teamSize }, (_, index) => spawnForIndex(index + 1, index, "blue", this.map.bounds, existing));
-    const orange = Array.from({ length: teamSize }, (_, index) => spawnForIndex(teamSize + index + 1, index, "orange", this.map.bounds, existing));
+    const blueExisting = orderedTeamSpawns(this.map.spawns, "blue");
+    const orangeExisting = orderedTeamSpawns(this.map.spawns, "orange");
+    const blue = Array.from({ length: teamSize }, (_, index) => spawnForIndex(index + 1, index, teamSize, "blue", this.map.bounds, blueExisting[index]));
+    const orange = Array.from({ length: teamSize }, (_, index) => spawnForIndex(teamSize + index + 1, index, teamSize, "orange", this.map.bounds, orangeExisting[index]));
     this.map.spawns = [...blue, ...orange];
     this.selectedSpawns = new Set([...this.selectedSpawns].filter((id) => this.map.spawns.some((spawn) => spawn.id === id)));
+    this.renderChrome();
   }
 
   private deleteSelected(): void {
@@ -907,17 +909,27 @@ function teamSizeFromSpawns(spawns: Spawn[]): number {
   return Math.max(1, spawns.filter((spawn) => spawn.team === "blue").length, spawns.filter((spawn) => spawn.team === "orange").length);
 }
 
-function spawnForIndex(index: number, slot: number, team: "blue" | "orange", bounds: MapDefinition["bounds"], existing: Map<string, Spawn>): Spawn {
+function orderedTeamSpawns(spawns: Spawn[], team: "blue" | "orange"): Spawn[] {
+  return spawns
+    .filter((spawn) => spawn.team === team)
+    .sort((a, b) => playerNumber(a.id) - playerNumber(b.id));
+}
+
+function spawnForIndex(index: number, slot: number, teamSize: number, team: "blue" | "orange", bounds: MapDefinition["bounds"], previous?: Spawn): Spawn {
   const id = `p${index}` as PlayerId;
-  const previous = existing.get(id);
   const lane = team === "blue" ? 0.22 : 0.78;
-  const rowOffset = slot % 4;
+  const spacing = Math.min(72, bounds.height / Math.max(4, teamSize + 1));
+  const y = bounds.height / 2 + (slot - (teamSize - 1) / 2) * spacing;
   return {
     id,
     team,
-    position: previous?.team === team ? { ...previous.position } : { x: bounds.width * lane, y: bounds.height * (0.38 + rowOffset * 0.12) },
-    angle: previous?.team === team ? previous.angle : team === "blue" ? 0 : Math.PI
+    position: previous ? { ...previous.position } : { x: bounds.width * lane, y },
+    angle: previous ? previous.angle : team === "blue" ? 0 : Math.PI
   };
+}
+
+function playerNumber(id: PlayerId): number {
+  return Number(id.slice(1)) || 0;
 }
 
 function blueprintOrigin(walls: Wall[]): Vec2 {
