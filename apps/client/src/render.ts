@@ -150,11 +150,15 @@ export function drawFogOfWar(g: Phaser.GameObjects.Graphics, map: MapDefinition,
     g.closePath();
   }
   g.fillPath();
-  g.fillStyle(0x173f4f, 0.13);
+  g.fillStyle(0xd7f3ff, 0.18);
   fillPolygon(g, visiblePolygon);
+  g.lineStyle(2, 0xd7f3ff, 0.28);
+  strokePolyline(g, visiblePolygon);
   for (const circle of visibleCircles) {
-    g.fillStyle(0x173f4f, 0.11);
+    g.fillStyle(0xd7f3ff, 0.13);
     g.fillCircle(circle.position.x, circle.position.y, circle.radius);
+    g.lineStyle(1, 0xd7f3ff, 0.18);
+    g.strokeCircle(circle.position.x, circle.position.y, circle.radius);
   }
 }
 
@@ -229,4 +233,12 @@ export function fillPolygon(g: Phaser.GameObjects.Graphics, points: Vec2[]): voi
   for (const point of points.slice(1)) g.lineTo(point.x, point.y);
   g.closePath();
   g.fillPath();
+}
+
+function strokePolyline(g: Phaser.GameObjects.Graphics, points: Vec2[]): void {
+  if (points.length < 2) return;
+  g.beginPath();
+  g.moveTo(points[0]!.x, points[0]!.y);
+  for (const point of points.slice(1)) g.lineTo(point.x, point.y);
+  g.strokePath();
 }
