@@ -185,7 +185,7 @@ export class PlayScene extends Phaser.Scene {
     try {
       const rooms = await listRooms();
       container.innerHTML = rooms.length
-        ? rooms.map((room) => `<button data-room="${room.id}">${room.id} | ${room.mapName} | ${room.playerCount}/2 | ${room.phase}</button>`).join("")
+        ? rooms.map((room) => `<button data-room="${room.id}">${room.id} | ${room.mapName} | ${room.playerCount}/${room.maxPlayers} | ${room.phase}</button>`).join("")
         : `<span>No active rooms yet.</span>`;
       container.querySelectorAll<HTMLButtonElement>("button[data-room]").forEach((button) => {
         button.addEventListener("click", () => this.connect({ mode: "join", roomId: button.dataset.room!, debug: false, loadout: this.currentLoadout() }));
@@ -467,7 +467,7 @@ export class PlayScene extends Phaser.Scene {
     const countdown = Math.max(0, Math.ceil(((round.phase === "countdown" ? round.startsAtTick : round.endsAtTick) - snapshot.tick) / TICK_RATE));
     const time = round.phase === "lobby" ? "waiting for player" : round.phase === "active" ? formatTime(countdown) : round.phase === "countdown" ? `starts in ${countdown}` : "ended";
     const roundResult = round.winner ? ` | round ${round.winner === "draw" ? "draw" : `${round.winner.toUpperCase()} won`}` : "";
-    const score = `${round.scores.p1}-${round.scores.p2}`;
+    const score = Object.entries(round.scores).map(([id, value]) => `${id.toUpperCase()} ${value}`).join(" / ");
     const doorDebug = snapshot.debug
       ? snapshot.map.walls
         .filter((wall) => isHingedDoorSegment(wall))
@@ -528,7 +528,7 @@ export class PlayScene extends Phaser.Scene {
 }
 
 function roomToPickable(room: RoomSummary) {
-  return { id: room.id, name: `${room.id} | ${room.mapName}`, detail: `${room.playerCount}/2 ${room.phase}` };
+  return { id: room.id, name: `${room.id} | ${room.mapName}`, detail: `${room.playerCount}/${room.maxPlayers} ${room.phase}` };
 }
 
 function rotateDoorEndpoint(hinge: Vec2, closedB: Vec2, angle: number): Vec2 {

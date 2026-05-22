@@ -15,6 +15,19 @@ describe("shared tactical primitives", () => {
     expect(parseMap({ ...legacyMap, walls: legacyMap.walls.map(({ kind: _kind, ...wall }) => wall) }).id).toBe("prototype-one");
   });
 
+  it("accepts additional team spawns for nvn maps", () => {
+    const parsed = parseMap({
+      ...sampleMap,
+      spawns: [
+        { id: "p1", team: "blue", position: { x: 10, y: 10 }, angle: 0 },
+        { id: "p2", team: "blue", position: { x: 10, y: 30 }, angle: 0 },
+        { id: "p3", team: "orange", position: { x: 90, y: 10 }, angle: Math.PI },
+        { id: "p4", team: "orange", position: { x: 90, y: 30 }, angle: Math.PI }
+      ]
+    });
+    expect(parsed.spawns.map((spawn) => spawn.id)).toEqual(["p1", "p2", "p3", "p4"]);
+  });
+
   it("normalizes legacy destructible wall kinds into a property", () => {
     const normalized = normalizeWallKind({ ...sampleMap.walls[0]!, kind: "destructible" as "solid", label: "destructible", destructible: false });
     expect(normalized.preset).toBe("breakable-wall");

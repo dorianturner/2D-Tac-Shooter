@@ -1,5 +1,5 @@
 export type Team = "blue" | "orange";
-export type PlayerId = "p1" | "p2";
+export type PlayerId = `p${number}`;
 export type RoundPhase = "lobby" | "countdown" | "active" | "ended";
 export type SensorKind = "camera" | "motion" | "sound";
 export type UtilityKind = "emp" | "breach" | "fake-noise" | "smoke" | "flash" | "signal-spoof";
@@ -337,6 +337,7 @@ export interface RoomSummary {
   mapId: string;
   mapName: string;
   playerCount: number;
+  maxPlayers: number;
   phase: RoundPhase;
 }
 

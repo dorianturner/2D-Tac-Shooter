@@ -43,6 +43,24 @@ describe("authoritative simulation", () => {
     expect(room.players.p1.position).toEqual({ x: 40, y: 50 });
   });
 
+  it("sizes lobbies from map spawns and waits for all team members", () => {
+    const map = testMap();
+    map.spawns = [
+      { id: "p1", team: "blue", position: { x: 40, y: 90 }, angle: 0 },
+      { id: "p2", team: "blue", position: { x: 40, y: 150 }, angle: 0 },
+      { id: "p3", team: "orange", position: { x: 260, y: 90 }, angle: Math.PI },
+      { id: "p4", team: "orange", position: { x: 260, y: 150 }, angle: Math.PI }
+    ];
+    const room = createRoom("team-room", map);
+    expect(Object.keys(room.slots)).toHaveLength(4);
+    expect(joinRoom(room, false)?.playerId).toBe("p1");
+    expect(joinRoom(room, false)?.playerId).toBe("p2");
+    expect(joinRoom(room, false)?.playerId).toBe("p3");
+    expect(room.round.phase).toBe("lobby");
+    expect(joinRoom(room, false)?.playerId).toBe("p4");
+    expect(room.round.phase).toBe("countdown");
+  });
+
   it("keeps one-player rooms in the lobby phase while waiting", () => {
     const room = createRoom("waiting", testMap());
     const welcome = joinRoom(room, false, "p1");

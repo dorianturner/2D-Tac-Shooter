@@ -3,6 +3,7 @@ import { normalizeMapDefinition } from "./editorGeometry.js";
 import type { MapDefinition } from "./types.js";
 
 const vec2 = z.object({ x: z.number(), y: z.number() });
+const playerId = z.string().regex(/^p[1-9][0-9]*$/);
 
 export const wallSchema = z.object({
   id: z.string().min(1),
@@ -40,7 +41,7 @@ export const utilityPlacementSchema = z.object({
   kind: z.enum(["emp", "breach", "fake-noise", "smoke", "flash", "signal-spoof"]),
   position: vec2,
   radius: z.number().positive(),
-  owner: z.enum(["p1", "p2"]).optional()
+  owner: playerId.optional()
 });
 
 export const lightNodeSchema = z.object({
@@ -65,16 +66,16 @@ export const mapSchema = z.object({
   walls: z.array(wallSchema),
   spawns: z.array(
     z.object({
-      id: z.enum(["p1", "p2"]),
+      id: playerId,
       team: z.enum(["blue", "orange"]),
       position: vec2,
       angle: z.number()
     })
-  ).length(2),
+  ).min(2),
   sensors: z.array(
     z.object({
       id: z.string().min(1),
-      owner: z.enum(["p1", "p2"]),
+      owner: playerId,
       kind: z.enum(["camera", "motion", "sound"]),
       position: vec2,
       angle: z.number(),

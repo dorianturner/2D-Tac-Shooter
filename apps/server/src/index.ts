@@ -39,7 +39,8 @@ wss.on("connection", (socket) => {
     sockets.delete(socket);
     if (!session) return;
     const room = rooms.get(session.roomId);
-    if (room) room.slots[session.playerId].connected = false;
+    const slot = room?.slots[session.playerId];
+    if (slot) slot.connected = false;
   });
 });
 
@@ -165,6 +166,7 @@ function listRooms(): RoomSummary[] {
       mapId: room.map.id,
       mapName: room.map.name,
       playerCount: Object.values(room.slots).filter((slot) => slot.connected).length,
+      maxPlayers: Object.keys(room.slots).length,
       phase: room.round.phase
     }));
 }

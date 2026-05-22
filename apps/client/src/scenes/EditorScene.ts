@@ -339,6 +339,14 @@ export class EditorScene extends Phaser.Scene {
     this.redraw();
   }
 
+  private setTeamSize(teamSize: number): void {
+    const existing = new Map(this.map.spawns.map((spawn) => [spawn.id, spawn]));
+    const blue = Array.from({ length: teamSize }, (_, index) => spawnForIndex(index + 1, index, "blue", this.map.bounds, existing));
+    const orange = Array.from({ length: teamSize }, (_, index) => spawnForIndex(teamSize + index + 1, index, "orange", this.map.bounds, existing));
+    this.map.spawns = [...blue, ...orange];
+    this.selectedSpawns = new Set([...this.selectedSpawns].filter((id) => this.map.spawns.some((spawn) => spawn.id === id)));
+  }
+
   private deleteSelected(): void {
     if (this.selectedIds.size === 0 && this.selectedSpawns.size === 0) return;
     this.recordUndo();
@@ -448,7 +456,7 @@ export class EditorScene extends Phaser.Scene {
   private drawSpawns(): void {
     for (const spawn of this.map.spawns) {
       const selected = this.selectedSpawns.has(spawn.id);
-      const color = spawn.id === "p1" ? colors.blue : colors.orange;
+      const color = spawn.team === "blue" ? colors.blue : colors.orange;
       this.overlay!.lineStyle(selected ? 4 : 2, selected ? colors.warning : color, 0.95);
       this.overlay!.strokeCircle(spawn.position.x, spawn.position.y, selected ? 16 : 12);
       this.overlay!.fillStyle(color, 0.85);
@@ -535,6 +543,7 @@ export class EditorScene extends Phaser.Scene {
       ${numberField("bounds.width", this.map.bounds.width)}
       ${numberField("bounds.height", this.map.bounds.height)}
       ${numberField("gridSize", this.map.gridSize ?? 40)}
+      ${numberField("teamSize", teamSizeFromSpawns(this.map.spawns))}
       ${numberField("doorWidth", this.doorWidth)}
       <label class="check-row">snap to grid <input type="checkbox" data-map-field="snap" ${this.snap ? "checked" : ""}></label>
     `;
@@ -626,6 +635,7 @@ export class EditorScene extends Phaser.Scene {
     if (field === "snap") this.snap = input.checked;
     else if (field === "name") this.map.name = input.value;
     else if (field === "gridSize") this.map.gridSize = Math.max(4, Number(input.value) || 40);
+    else if (field === "teamSize") this.setTeamSize(Math.max(1, Math.min(8, Number(input.value) || 1)));
     else if (field === "doorWidth") this.doorWidth = Math.max(8, Number(input.value) || defaultDoorWidth);
     else if (field === "bounds.width") this.map.bounds.width = Math.max(80, Number(input.value) || this.map.bounds.width);
     else if (field === "bounds.height") this.map.bounds.height = Math.max(80, Number(input.value) || this.map.bounds.height);
@@ -891,6 +901,23 @@ function createBlankMap(): MapDefinition {
     lighting: [],
     notes: ""
   });
+}
+
+function teamSizeFromSpawns(spawns: Spawn[]): number {
+  return Math.max(1, spawns.filter((spawn) => spawn.team === "blue").length, spawns.filter((spawn) => spawn.team === "orange").length);
+}
+
+function spawnForIndex(index: number, slot: number, team: "blue" | "orange", bounds: MapDefinition["bounds"], existing: Map<string, Spawn>): Spawn {
+  const id = `p${index}` as PlayerId;
+  const previous = existing.get(id);
+  const lane = team === "blue" ? 0.22 : 0.78;
+  const rowOffset = slot % 4;
+  return {
+    id,
+    team,
+    position: previous?.team === team ? { ...previous.position } : { x: bounds.width * lane, y: bounds.height * (0.38 + rowOffset * 0.12) },
+    angle: previous?.team === team ? previous.angle : team === "blue" ? 0 : Math.PI
+  };
 }
 
 function blueprintOrigin(walls: Wall[]): Vec2 {

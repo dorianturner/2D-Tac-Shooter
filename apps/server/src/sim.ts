@@ -135,6 +135,9 @@ interface PlayerSlot {
   lastSeenCameras: Map<string, DeployedCamera>;
 }
 
+type PlayerRecord = Record<PlayerId, PlayerState> & { p1: PlayerState; p2: PlayerState };
+type SlotRecord = Record<PlayerId, PlayerSlot> & { p1: PlayerSlot; p2: PlayerSlot };
+
 export interface RoomState {
   id: string;
   map: MapDefinition;
@@ -142,8 +145,8 @@ export interface RoomState {
   createdAtMs: number;
   tick: number;
   round: ServerSnapshot["round"];
-  players: Record<PlayerId, PlayerState>;
-  slots: Record<PlayerId, PlayerSlot>;
+  players: PlayerRecord;
+  slots: SlotRecord;
   detections: Detection[];
   shotImpacts: ShotImpact[];
   deployedCameras: DeployedCamera[];
@@ -158,6 +161,7 @@ export interface RoomState {
 export function createRoom(id: string, sourceMap: MapDefinition = sampleMap): RoomState {
   const baseMap = structuredClone(sourceMap);
   const map = initializeRuntimeMap(structuredClone(baseMap));
+  const playerIds = map.spawns.map((spawn) => spawn.id);
   const players = Object.fromEntries(
     map.spawns.map((spawn) => [
       spawn.id,
@@ -181,7 +185,8 @@ export function createRoom(id: string, sourceMap: MapDefinition = sampleMap): Ro
         gadgets: createPlayerClass().gadgets
       }
     ])
-  ) as Record<PlayerId, PlayerState>;
+  ) as PlayerRecord;
+  const slots = Object.fromEntries(playerIds.map((playerId) => [playerId, createSlot(playerId)])) as SlotRecord;
 
   return {
     id,
@@ -189,9 +194,9 @@ export function createRoom(id: string, sourceMap: MapDefinition = sampleMap): Ro
     baseMap,
     createdAtMs: Date.now(),
     tick: 0,
-    round: { phase: "lobby", roundNumber: 1, scores: { p1: 0, p2: 0 }, startsAtTick: ROUND_COUNTDOWN_TICKS, endsAtTick: ROUND_COUNTDOWN_TICKS + ROUND_TICKS },
+    round: { phase: "lobby", roundNumber: 1, scores: scoresForPlayers(playerIds), startsAtTick: ROUND_COUNTDOWN_TICKS, endsAtTick: ROUND_COUNTDOWN_TICKS + ROUND_TICKS },
     players,
-    slots: { p1: createSlot("p1"), p2: createSlot("p2") },
+    slots,
     detections: [],
     shotImpacts: [],
     deployedCameras: [],
@@ -222,6 +227,31 @@ function createSlot(id: PlayerId): PlayerSlot {
   };
 }
 
+function playerIds(room: RoomState): PlayerId[] {
+  return Object.keys(room.players) as PlayerId[];
+}
+
+function getPlayer(room: RoomState, id: PlayerId): PlayerState {
+  const player = room.players[id];
+  if (!player) throw new Error(`Unknown player ${id}`);
+  return player;
+}
+
+function getSlot(room: RoomState, id: PlayerId): PlayerSlot {
+  const slot = room.slots[id];
+  if (!slot) throw new Error(`Unknown player slot ${id}`);
+  return slot;
+}
+
+function enemyPlayers(room: RoomState, playerId: PlayerId): PlayerState[] {
+  const player = getPlayer(room, playerId);
+  return Object.values(room.players).filter((candidate) => candidate.id !== playerId && candidate.team !== player.team);
+}
+
+function scoresForPlayers(ids: PlayerId[]): Record<PlayerId, number> {
+  return Object.fromEntries(ids.map((id) => [id, 0])) as Record<PlayerId, number>;
+}
+
 function applyPlayerLoadout(player: PlayerState, selection?: PlayerLoadoutSelection): void {
   const playerClass = createPlayerClass(selection);
   const weapon = createWeapon(selection);
@@ -236,13 +266,13 @@ function applyPlayerLoadout(player: PlayerState, selection?: PlayerLoadoutSelect
 }
 
 export function joinRoom(room: RoomState, debug = false, preferred?: PlayerId, loadout?: PlayerLoadoutSelection): ServerWelcome | null {
-  const playerId = preferred ?? (!room.slots.p1.connected ? "p1" : !room.slots.p2.connected ? "p2" : null);
+  const playerId = preferred ?? Object.values(room.slots).find((candidate) => !candidate.connected)?.id ?? null;
   if (!playerId || room.round.matchWinner) return null;
-  const slot = room.slots[playerId];
-  applyPlayerLoadout(room.players[playerId], loadout);
+  const slot = getSlot(room, playerId);
+  applyPlayerLoadout(getPlayer(room, playerId), loadout);
   slot.connected = true;
   slot.debug = debug;
-  if (room.slots.p1.connected && room.slots.p2.connected && room.round.phase === "lobby") {
+  if (Object.values(room.slots).every((candidate) => candidate.connected) && room.round.phase === "lobby") {
     room.round.phase = "countdown";
   }
   return { type: "welcome", playerId, roomId: room.id, reconnectToken: slot.reconnectToken, map: room.map };
@@ -251,12 +281,12 @@ export function joinRoom(room: RoomState, debug = false, preferred?: PlayerId, l
 export function applyClientMessage(room: RoomState, playerId: PlayerId, message: ClientMessage): void {
   if (message.type === "rematch") {
     room.rematchRequests.add(playerId);
-    if (room.round.matchWinner && room.rematchRequests.has("p1") && room.rematchRequests.has("p2")) resetMatch(room);
+    if (room.round.matchWinner && playerIds(room).every((id) => room.rematchRequests.has(id))) resetMatch(room);
     return;
   }
   if (message.type !== "command") return;
   const command = { ...message, move: normalize(message.move), tick: room.tick };
-  const slot = room.slots[playerId];
+  const slot = getSlot(room, playerId);
   slot.inputState = { move: command.move, aim: command.aim, fire: command.fire, walk: Boolean(command.walk) };
   enqueueCommandActions(slot, command);
   room.replay.commands.push({ ...command, playerId });
@@ -342,7 +372,7 @@ export function stepRoom(room: RoomState): void {
   const desiredMovements: DesiredMovement[] = [];
   for (const player of Object.values(room.players)) {
     if (!player.alive) continue;
-    const slot = room.slots[player.id];
+    const slot = getSlot(room, player.id);
     const input = slot.inputState;
     completeReload(player, room.tick);
     player.walking = Boolean(input.walk);
@@ -643,8 +673,9 @@ function toggleNearestDoor(room: RoomState, player: PlayerState): boolean {
     return true;
   }
 
-  const panel = { x: door.b.x - door.hinge.x, y: door.b.y - door.hinge.y };
-  const playerOffset = { x: player.position.x - door.hinge.x, y: player.position.y - door.hinge.y };
+  const hinge = door.hinge;
+  const panel = { x: door.b.x - hinge.x, y: door.b.y - hinge.y };
+  const playerOffset = { x: player.position.x - hinge.x, y: player.position.y - hinge.y };
   const side = cross(panel, playerOffset);
   const sign = Math.abs(side) > 0.001 ? -Math.sign(side) : Math.sign(Math.cos(player.aim)) || 1;
   door.targetAngle = sign * DOOR_MAX_ANGLE;
@@ -659,7 +690,7 @@ const gadgetStrategies: Record<GadgetKind, GadgetStrategy> = {
     deploy(room, player, _action, resolved) {
       const camera: DeployedCamera = { id: `${player.id}-cam-${room.tick}-${room.deployedCameras.length}`, owner: player.id, position: resolved.position, radius: CAMERA_RADIUS, hp: 1 };
       room.deployedCameras.push(camera);
-      room.slots[player.id].lastSeenCameras.set(camera.id, structuredClone(camera));
+      getSlot(room, player.id).lastSeenCameras.set(camera.id, structuredClone(camera));
       pushEvent(room, { type: "camera-deployed", tick: room.tick, playerId: player.id, cameraId: camera.id });
       return { accepted: true };
     }
@@ -693,7 +724,7 @@ const gadgetStrategies: Record<GadgetKind, GadgetStrategy> = {
     deploy(room, player, action, resolved) {
       const wall = createDeployableWall(`${player.id}-wall-${room.tick}-${room.map.walls.length}`, resolved.position, action.angle);
       room.map.walls.push(wall);
-      room.slots[player.id].lastSeenWalls.set(wall.id, structuredClone(wall));
+      getSlot(room, player.id).lastSeenWalls.set(wall.id, structuredClone(wall));
       pushEvent(room, { type: "deployable-wall-deployed", tick: room.tick, playerId: player.id, wallId: wall.id });
       return { accepted: true };
     }
@@ -740,9 +771,9 @@ function thrownDeployCheck(range: number): GadgetStrategy["canDeploy"] {
 }
 
 function resolveShot(room: RoomState, shooterId: PlayerId): void {
-  const slot = room.slots[shooterId];
+  const slot = getSlot(room, shooterId);
   if (room.tick < slot.nextFireTick) return;
-  const shooter = room.players[shooterId];
+  const shooter = getPlayer(room, shooterId);
   const weapon = createWeapon({ weaponId: shooter.weaponId });
   if (!shooter.alive) return;
   completeReload(shooter, room.tick);
@@ -761,7 +792,7 @@ function resolveShot(room: RoomState, shooterId: PlayerId): void {
   pushEvent(room, { type: "shot", tick: room.tick, impact });
 
   if (hit.kind === "player" && hit.targetId) {
-    const target = room.players[hit.targetId];
+    const target = getPlayer(room, hit.targetId);
     target.hp = Math.max(0, target.hp - weapon.damage);
     pushEvent(room, { type: "hit", tick: room.tick, shooter: shooterId, target: hit.targetId });
     if (target.hp <= 0) {
@@ -781,10 +812,10 @@ function resolveShot(room: RoomState, shooterId: PlayerId): void {
 function resolveHitscan(room: RoomState, shooterId: PlayerId, origin: Vec2, rayEnd: Vec2, maxRange = FIRE_RANGE): { kind: ShotImpact["hit"]; end: Vec2; targetId?: PlayerId; wallId?: string; cameraId?: string; soundSensorId?: string } {
   const direction = normalize({ x: rayEnd.x - origin.x, y: rayEnd.y - origin.y });
   let nearest: { kind: ShotImpact["hit"]; distance: number; end: Vec2; targetId?: PlayerId; wallId?: string; cameraId?: string; soundSensorId?: string } = { kind: "none", distance: maxRange, end: rayEnd };
-  const targetId: PlayerId = shooterId === "p1" ? "p2" : "p1";
-  const target = room.players[targetId];
-  const playerDistance = target.alive ? rayCircleDistance(origin, direction, target.position, PLAYER_RADIUS, maxRange) : null;
-  if (playerDistance !== null) nearest = { kind: "player", distance: playerDistance, end: add(origin, mul(direction, playerDistance)), targetId };
+  for (const target of enemyPlayers(room, shooterId)) {
+    const playerDistance = target.alive ? rayCircleDistance(origin, direction, target.position, PLAYER_RADIUS, maxRange) : null;
+    if (playerDistance !== null && playerDistance < nearest.distance) nearest = { kind: "player", distance: playerDistance, end: add(origin, mul(direction, playerDistance)), targetId: target.id };
+  }
 
   for (const camera of room.deployedCameras) {
     if (camera.destroyed) continue;
@@ -829,7 +860,7 @@ function damageWall(room: RoomState, wallId: string, shooterId: PlayerId): void 
   wall.hp = Math.max(0, (wall.hp ?? wall.maxHp ?? 1) - 1);
   if (wall.hp <= 0) {
     wall.destroyed = true;
-    room.slots[shooterId].lastSeenWalls.set(wall.id, structuredClone(wall));
+    getSlot(room, shooterId).lastSeenWalls.set(wall.id, structuredClone(wall));
     pushEvent(room, { type: "wall-destroyed", tick: room.tick, wallId: wall.id, playerId: shooterId });
   }
 }
@@ -839,8 +870,8 @@ function damageCamera(room: RoomState, cameraId: string, shooterId: PlayerId): v
   if (!camera || camera.destroyed) return;
   camera.hp = 0;
   camera.destroyed = true;
-  room.slots[shooterId].lastSeenCameras.set(camera.id, structuredClone(camera));
-  room.slots[camera.owner].lastSeenCameras.set(camera.id, structuredClone(camera));
+  getSlot(room, shooterId).lastSeenCameras.set(camera.id, structuredClone(camera));
+  getSlot(room, camera.owner).lastSeenCameras.set(camera.id, structuredClone(camera));
   pushEvent(room, { type: "camera-destroyed", tick: room.tick, playerId: shooterId, cameraId: camera.id });
 }
 
@@ -852,11 +883,11 @@ function damageSoundSensor(room: RoomState, sensorId: string, _shooterId: Player
 }
 
 function finishRound(room: RoomState, winner: PlayerId | "draw", reason: "kill" | "timer"): void {
-  if (winner !== "draw") room.round.scores[winner] += 1;
+  if (winner !== "draw") room.round.scores[winner] = (room.round.scores[winner] ?? 0) + 1;
   room.round.winner = winner;
   room.round.reason = reason;
   pushEvent(room, { type: "round-end", tick: room.tick, winner, reason });
-  if (winner !== "draw" && room.round.scores[winner] >= 2) {
+  if (winner !== "draw" && (room.round.scores[winner] ?? 0) >= 2) {
     room.round.phase = "ended";
     room.round.matchWinner = winner;
     return;
@@ -882,7 +913,8 @@ function resetRoundWorld(room: RoomState): void {
 
 function resetPlayersForRound(room: RoomState): void {
   for (const spawn of room.map.spawns) {
-    const player = room.players[spawn.id];
+    const player = getPlayer(room, spawn.id);
+    const slot = getSlot(room, player.id);
     player.position = { ...spawn.position };
     player.velocity = { x: 0, y: 0 };
     player.aim = spawn.angle;
@@ -895,20 +927,20 @@ function resetPlayersForRound(room: RoomState): void {
     player.walking = false;
     delete player.reloadEndsAtTick;
     player.gadgets = { ...player.gadgetLoadout };
-    room.slots[player.id].inputState = { move: { x: 0, y: 0 }, aim: spawn.angle, fire: false, walk: false };
-    room.slots[player.id].pendingActions = [];
-    room.slots[player.id].seenActionSeqs.clear();
-    room.slots[player.id].actionResults = [];
-    room.slots[player.id].nextFireTick = room.tick;
-    room.slots[player.id].nextActionTick = room.tick;
-    room.slots[player.id].lastSeenWalls.clear();
-    room.slots[player.id].lastSeenCameras.clear();
+    slot.inputState = { move: { x: 0, y: 0 }, aim: spawn.angle, fire: false, walk: false };
+    slot.pendingActions = [];
+    slot.seenActionSeqs.clear();
+    slot.actionResults = [];
+    slot.nextFireTick = room.tick;
+    slot.nextActionTick = room.tick;
+    slot.lastSeenWalls.clear();
+    slot.lastSeenCameras.clear();
   }
 }
 
 function resetMatch(room: RoomState): void {
   room.tick = 0;
-  room.round = { phase: "countdown", roundNumber: 1, scores: { p1: 0, p2: 0 }, startsAtTick: ROUND_COUNTDOWN_TICKS, endsAtTick: ROUND_COUNTDOWN_TICKS + ROUND_TICKS };
+  room.round = { phase: "countdown", roundNumber: 1, scores: scoresForPlayers(playerIds(room)), startsAtTick: ROUND_COUNTDOWN_TICKS, endsAtTick: ROUND_COUNTDOWN_TICKS + ROUND_TICKS };
   room.rematchRequests.clear();
   resetRoundWorld(room);
   resetPlayersForRound(room);
@@ -916,7 +948,7 @@ function resetMatch(room: RoomState): void {
 
 export function isExpiredUnfilledLobby(room: RoomState, nowMs = Date.now()): boolean {
   const connected = Object.values(room.slots).filter((slot) => slot.connected).length;
-  return room.round.phase === "lobby" && connected < 2 && nowMs - room.createdAtMs >= 60_000;
+  return room.round.phase === "lobby" && connected < Object.keys(room.slots).length && nowMs - room.createdAtMs >= 60_000;
 }
 
 function resolveMolotovDamage(room: RoomState): void {
@@ -940,23 +972,24 @@ function resolveMolotovDamage(room: RoomState): void {
 function resolveSoundSensors(room: RoomState): void {
   for (const sensor of room.soundSensors) {
     if (sensor.destroyed) continue;
-    const target = room.players[sensor.owner === "p1" ? "p2" : "p1"];
-    const speed = Math.hypot(target.velocity.x, target.velocity.y);
-    const triggered = target.alive && !target.walking && speed >= SOUND_SENSOR_SPEED_THRESHOLD && distance(sensor.position, target.position) <= sensor.radius;
-    if (!triggered) continue;
-    sensor.triggeredUntilTick = room.tick + SOUND_SENSOR_TRIGGER_TICKS;
-    const detection: Detection = {
-      id: `${sensor.id}-${room.tick}`,
-      kind: "sound-area",
-      position: { ...sensor.position },
-      radius: sensor.radius,
-      confidence: 0.72,
-      expiresAtTick: room.tick + SOUND_SENSOR_TRIGGER_TICKS,
-      owner: sensor.owner,
-      targetId: target.id
-    };
-    room.detections.push(detection);
-    pushEvent(room, { type: "sensor-detect", tick: room.tick, sensorId: sensor.id, target: target.id, confidence: detection.confidence });
+    for (const target of enemyPlayers(room, sensor.owner)) {
+      const speed = Math.hypot(target.velocity.x, target.velocity.y);
+      const triggered = target.alive && !target.walking && speed >= SOUND_SENSOR_SPEED_THRESHOLD && distance(sensor.position, target.position) <= sensor.radius;
+      if (!triggered) continue;
+      sensor.triggeredUntilTick = room.tick + SOUND_SENSOR_TRIGGER_TICKS;
+      const detection: Detection = {
+        id: `${sensor.id}-${target.id}-${room.tick}`,
+        kind: "sound-area",
+        position: { ...sensor.position },
+        radius: sensor.radius,
+        confidence: 0.72,
+        expiresAtTick: room.tick + SOUND_SENSOR_TRIGGER_TICKS,
+        owner: sensor.owner,
+        targetId: target.id
+      };
+      room.detections.push(detection);
+      pushEvent(room, { type: "sensor-detect", tick: room.tick, sensorId: sensor.id, target: target.id, confidence: detection.confidence });
+    }
   }
 }
 
@@ -975,34 +1008,33 @@ function breachNearestWall(room: RoomState, player: PlayerState): boolean {
 function resolveSensors(room: RoomState): void {
   for (const sensor of room.map.sensors) {
     if (sensor.destroyed || sensor.corrupted) continue;
-    const target = room.players[sensor.owner === "p1" ? "p2" : "p1"];
-    if (!target.alive) continue;
-    const seesTarget = sensor.kind === "camera"
-      ? pointInCone(sensor.position, sensor.angle, sensor.fov, sensor.range, target.position) && hasLineOfSightWithSmoke(room.map, room.smokes, sensor.position, target.position)
-      : distance(sensor.position, target.position) <= sensor.range && hasLineOfSightWithSmoke(room.map, room.smokes, sensor.position, target.position) && room.tick % 20 === 0;
-    if (!seesTarget) continue;
-    const confidence = sensor.kind === "camera" ? 0.82 : 0.55;
-    const noise = sensor.kind === "motion" ? Math.sin(room.tick * 12.9898) * 18 : 0;
-    const detection: Detection = { id: `${sensor.id}-${room.tick}`, kind: sensor.kind === "motion" ? "motion-pulse" : "camera", position: { x: target.position.x + noise, y: target.position.y - noise }, confidence, expiresAtTick: room.tick + (sensor.kind === "motion" ? 35 : 8), targetId: target.id };
-    room.detections.push(detection);
-    pushEvent(room, { type: "sensor-detect", tick: room.tick, sensorId: sensor.id, target: target.id, confidence });
+    for (const target of enemyPlayers(room, sensor.owner)) {
+      if (!target.alive) continue;
+      const seesTarget = sensor.kind === "camera"
+        ? pointInCone(sensor.position, sensor.angle, sensor.fov, sensor.range, target.position) && hasLineOfSightWithSmoke(room.map, room.smokes, sensor.position, target.position)
+        : distance(sensor.position, target.position) <= sensor.range && hasLineOfSightWithSmoke(room.map, room.smokes, sensor.position, target.position) && room.tick % 20 === 0;
+      if (!seesTarget) continue;
+      const confidence = sensor.kind === "camera" ? 0.82 : 0.55;
+      const noise = sensor.kind === "motion" ? Math.sin(room.tick * 12.9898) * 18 : 0;
+      const detection: Detection = { id: `${sensor.id}-${target.id}-${room.tick}`, kind: sensor.kind === "motion" ? "motion-pulse" : "camera", position: { x: target.position.x + noise, y: target.position.y - noise }, confidence, expiresAtTick: room.tick + (sensor.kind === "motion" ? 35 : 8), targetId: target.id };
+      room.detections.push(detection);
+      pushEvent(room, { type: "sensor-detect", tick: room.tick, sensorId: sensor.id, target: target.id, confidence });
+    }
   }
 }
 
 export function snapshotFor(room: RoomState, playerId: PlayerId): ServerSnapshot {
-  const self = room.players[playerId];
+  const self = getPlayer(room, playerId);
+  const slot = getSlot(room, playerId);
   completeReload(self, room.tick);
-  const opponentId: PlayerId = playerId === "p1" ? "p2" : "p1";
-  const opponent = room.players[opponentId];
-  const debug = room.slots[playerId].debug;
-  const visiblePlayers: PlayerState[] = [];
-  if (opponent.alive && isPointVisibleToPlayer(room, self, opponent.position)) {
-    visiblePlayers.push({ ...opponent, position: { ...opponent.position }, velocity: { ...opponent.velocity } });
-  }
+  const debug = slot.debug;
+  const visiblePlayers = enemyPlayers(room, playerId)
+    .filter((opponent) => opponent.alive && isPointVisibleToPlayer(room, self, opponent.position))
+    .map((opponent) => ({ ...opponent, position: { ...opponent.position }, velocity: { ...opponent.velocity } }));
   const selfWeapon = createWeapon({ weaponId: self.weaponId });
   const polygon = visibleConePolygonWithSmoke(room.map, room.smokes, self.position, self.aim, selfWeapon.visionFov, selfWeapon.visionRange, 54);
-  room.slots[playerId].explored.push(...polygon.filter((_, index) => index % 8 === 0));
-  room.slots[playerId].explored = room.slots[playerId].explored.slice(-400);
+  slot.explored.push(...polygon.filter((_, index) => index % 8 === 0));
+  slot.explored = slot.explored.slice(-400);
   const visibleShotImpacts = room.shotImpacts.filter((impact) => {
     if (impact.shooter === playerId) return true;
     return isPointVisibleToPlayer(room, self, impact.origin) || isPointVisibleToPlayer(room, self, impact.end);
@@ -1028,8 +1060,8 @@ export function snapshotFor(room: RoomState, playerId: PlayerId): ServerSnapshot
       { position: { ...self.position }, radius: PLAYER_CLOSE_VISION_RADIUS },
       ...room.deployedCameras.filter((camera) => camera.owner === playerId && !camera.destroyed).map((camera) => ({ position: camera.position, radius: camera.radius }))
     ],
-    explored: room.slots[playerId].explored,
-    actionResults: room.slots[playerId].actionResults.slice(-12)
+    explored: slot.explored,
+    actionResults: slot.actionResults.slice(-12)
   };
 
   if (debug) {
@@ -1037,9 +1069,8 @@ export function snapshotFor(room: RoomState, playerId: PlayerId): ServerSnapshot
       players: Object.values(room.players),
       detections: room.detections,
       visibleByPlayer: {
-        p1: visibleConePolygonWithSmoke(room.map, room.smokes, room.players.p1.position, room.players.p1.aim, createWeapon({ weaponId: room.players.p1.weaponId }).visionFov, createWeapon({ weaponId: room.players.p1.weaponId }).visionRange, 48),
-        p2: visibleConePolygonWithSmoke(room.map, room.smokes, room.players.p2.position, room.players.p2.aim, createWeapon({ weaponId: room.players.p2.weaponId }).visionFov, createWeapon({ weaponId: room.players.p2.weaponId }).visionRange, 48)
-      }
+        ...Object.fromEntries(Object.values(room.players).map((player) => [player.id, visibleConePolygonWithSmoke(room.map, room.smokes, player.position, player.aim, createWeapon({ weaponId: player.weaponId }).visionFov, createWeapon({ weaponId: player.weaponId }).visionRange, 48)]))
+      } as Record<PlayerId, Vec2[]>
     };
   }
   return snapshot;
@@ -1058,8 +1089,8 @@ function wallVisibleToPlayer(room: RoomState, player: PlayerState, wall: Wall): 
 }
 
 function wallsForPlayer(room: RoomState, playerId: PlayerId): Wall[] {
-  const player = room.players[playerId];
-  const slot = room.slots[playerId];
+  const player = getPlayer(room, playerId);
+  const slot = getSlot(room, playerId);
   return room.map.walls.flatMap((wall) => {
     if (wallVisibleToPlayer(room, player, wall)) {
       const clone = structuredClone(wall);
@@ -1074,8 +1105,8 @@ function wallsForPlayer(room: RoomState, playerId: PlayerId): Wall[] {
 }
 
 function visibleCamerasFor(room: RoomState, playerId: PlayerId): DeployedCamera[] {
-  const player = room.players[playerId];
-  const slot = room.slots[playerId];
+  const player = getPlayer(room, playerId);
+  const slot = getSlot(room, playerId);
   const visible: DeployedCamera[] = [];
   for (const camera of room.deployedCameras) {
     if (camera.owner === playerId || isPointVisibleToPlayer(room, player, camera.position)) {
