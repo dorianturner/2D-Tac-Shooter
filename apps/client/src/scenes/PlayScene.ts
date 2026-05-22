@@ -3,6 +3,7 @@ import { distance, isHingedDoorSegment, lineIntersection, normalize, playerClass
 import { listMaps, listRooms } from "../editorApi";
 import { mapSummaryToPickable, pickFromList } from "../fuzzyPicker";
 import { colors, drawDeployedCamera, drawFogOfWar, drawMap, drawMolotovZone, drawObjective, drawPlayer, drawSmokeZone, drawSoundSensorZone } from "../render";
+import { websocketUrl } from "../serverConfig";
 
 const GADGET_RANGES: Record<GadgetKind, number> = { camera: 180, molotov: 220, smoke: 220, wall: 180, sound: 180 };
 const GADGET_RADII: Record<Exclude<GadgetKind, "wall">, number> = { camera: 120, molotov: 55, smoke: 62, sound: 135 };
@@ -247,9 +248,17 @@ export class PlayScene extends Phaser.Scene {
     this.menuOpen = false;
     this.queuedDeploy = undefined;
     this.pendingDeploy = undefined;
-    this.socket = new WebSocket("ws://localhost:8787");
+    this.socket = new WebSocket(websocketUrl());
     this.socket.addEventListener("open", () => this.send({ type: "hello", ...hello }));
-    this.socket.addEventListener("message", (event) => this.onMessage(JSON.parse(event.data as string) as ServerMessage));
+    this.socket.addEventListener("message", (event) => {
+      const message = parseServerMessage(event.data);
+      if (!message) {
+        this.setHud("Received a non-game WebSocket message. Check the server URL.");
+        return;
+      }
+      this.onMessage(message);
+    });
+    this.socket.addEventListener("error", () => this.setHud(`Unable to connect to game server at ${websocketUrl()}.`));
   }
 
   private currentLoadout(): PlayerLoadoutSelection {
@@ -658,6 +667,16 @@ function formatRange(range: number): string {
 
 function roomToPickable(room: RoomSummary) {
   return { id: room.id, name: `${room.id} | ${room.mapName}`, detail: `${room.playerCount}/${room.maxPlayers} ${room.phase}` };
+}
+
+function parseServerMessage(data: unknown): ServerMessage | null {
+  if (typeof data !== "string") return null;
+  try {
+    return JSON.parse(data) as ServerMessage;
+  } catch {
+    console.warn("Ignoring non-JSON WebSocket message from game server", data.slice(0, 120));
+    return null;
+  }
 }
 
 function rotateDoorEndpoint(hinge: Vec2, closedB: Vec2, angle: number): Vec2 {

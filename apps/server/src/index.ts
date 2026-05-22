@@ -1,6 +1,7 @@
 import { createServer } from "node:http";
 import { WebSocketServer, type WebSocket } from "ws";
 import type { ClientHello, ClientMessage, PlayerId, RoomSummary, ServerMessage } from "@tac/shared";
+import { handleCorsPreflight } from "./cors.js";
 import { listMaps, readMap, writeMap } from "./mapStore.js";
 import { applyClientMessage, createRoom, isExpiredUnfilledLobby, joinRoom, snapshotFor, stepRoom, TICK_MS, type RoomState } from "./sim.js";
 
@@ -63,13 +64,7 @@ server.listen(PORT, () => {
 });
 
 async function handleHttp(request: import("node:http").IncomingMessage, response: import("node:http").ServerResponse): Promise<void> {
-  response.setHeader("Access-Control-Allow-Origin", "*");
-  response.setHeader("Access-Control-Allow-Methods", "GET,PUT,OPTIONS");
-  response.setHeader("Access-Control-Allow-Headers", "Content-Type");
-  if (request.method === "OPTIONS") {
-    response.writeHead(204).end();
-    return;
-  }
+  if (handleCorsPreflight(request, response)) return;
 
   const url = new URL(request.url ?? "/", `http://${request.headers.host ?? "localhost"}`);
   try {

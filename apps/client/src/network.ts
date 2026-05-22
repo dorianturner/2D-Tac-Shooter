@@ -1,4 +1,5 @@
 import type { ClientMessage, PlayerCommand, ServerMessage, ServerSnapshot, ServerWelcome } from "@tac/shared";
+import { websocketUrl } from "./serverConfig";
 
 type Listener = (message: ServerMessage) => void;
 
@@ -11,12 +12,13 @@ export class GameConnection {
 
   connect(debug = false): void {
     const token = localStorage.getItem("tac-reconnect-token") ?? undefined;
-    this.socket = new WebSocket("ws://localhost:8787");
+    this.socket = new WebSocket(websocketUrl());
     this.socket.addEventListener("open", () => {
       this.send(token ? { type: "hello", roomId: "local", reconnectToken: token, debug } : { type: "hello", roomId: "local", debug });
     });
     this.socket.addEventListener("message", (event) => {
-      const message = JSON.parse(event.data as string) as ServerMessage;
+      const message = parseServerMessage(event.data);
+      if (!message) return;
       if (message.type === "welcome") {
         this.welcome = message;
         localStorage.setItem("tac-reconnect-token", message.reconnectToken);
@@ -38,5 +40,15 @@ export class GameConnection {
     if (this.socket?.readyState === WebSocket.OPEN) {
       this.socket.send(JSON.stringify(message));
     }
+  }
+}
+
+function parseServerMessage(data: unknown): ServerMessage | null {
+  if (typeof data !== "string") return null;
+  try {
+    return JSON.parse(data) as ServerMessage;
+  } catch {
+    console.warn("Ignoring non-JSON WebSocket message from game server", data.slice(0, 120));
+    return null;
   }
 }
