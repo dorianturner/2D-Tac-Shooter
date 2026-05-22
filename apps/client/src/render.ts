@@ -28,36 +28,19 @@ export function drawMap(g: Phaser.GameObjects.Graphics, map: MapDefinition): voi
 
 export function drawWall(g: Phaser.GameObjects.Graphics, wall: Wall): void {
   const preset = segmentPreset(wall);
+  const destroyed = Boolean(wall.destroyed);
+  const accentDestructible = wall.destructible && !destroyed;
+  if (accentDestructible) drawDestructibleOutline(g, wall);
   
   // Handle mesh walls with X pattern
   if (preset === "mesh") {
-    g.lineStyle(Math.max(1, wall.thickness / 2), 0xb6f2df, 0.9);
-    const dx = wall.b.x - wall.a.x;
-    const dy = wall.b.y - wall.a.y;
-    const length = Math.hypot(dx, dy);
-    const offset = 8; // Fixed pixel offset
-    if (length > 0) {
-      const normX = dx / length;
-      const normY = dy / length;
-      const perpX = -normY * offset;
-      const perpY = normX * offset;
-      // Draw X pattern
-      g.lineBetween(wall.a.x - perpX, wall.a.y - perpY, wall.b.x + perpX, wall.b.y + perpY);
-      g.lineBetween(wall.a.x + perpX, wall.a.y + perpY, wall.b.x - perpX, wall.b.y - perpY);
-    }
-    return;
-  }
-  
-  // Handle destructible walls with solid orange
-  if (wall.destructible && !wall.destroyed) {
-    g.lineStyle(Math.max(2, wall.thickness), colors.destructible, 0.95);
-    g.lineBetween(wall.a.x, wall.a.y, wall.b.x, wall.b.y);
+    drawMeshWall(g, wall, destroyed ? colors.destroyed : 0xb6f2df, destroyed ? 0.18 : 0.9);
     return;
   }
   
   // Handle other wall types
-  const color = wall.destroyed ? colors.destroyed : preset === "door" ? colors.sensor : preset === "window" ? 0x67d7ff : colors.wall;
-  const alpha = wall.destroyed ? 0.18 : preset === "door" ? 0.72 : preset === "window" ? 0.48 : 0.92;
+  const color = destroyed ? colors.destroyed : preset === "door" ? colors.sensor : preset === "window" ? 0x67d7ff : colors.wall;
+  const alpha = destroyed ? 0.18 : preset === "door" ? 0.72 : preset === "window" ? 0.48 : 0.92;
   g.lineStyle(Math.max(2, wall.thickness), color, alpha);
   g.lineBetween(wall.a.x, wall.a.y, wall.b.x, wall.b.y);
   
@@ -65,6 +48,29 @@ export function drawWall(g: Phaser.GameObjects.Graphics, wall: Wall): void {
     g.lineStyle(1, color, 0.8);
     g.strokeCircle((wall.a.x + wall.b.x) / 2, (wall.a.y + wall.b.y) / 2, 7);
   }
+}
+
+function drawMeshWall(g: Phaser.GameObjects.Graphics, wall: Wall, color: number, alpha: number): void {
+  g.lineStyle(Math.max(1, wall.thickness / 2), color, alpha);
+  const dx = wall.b.x - wall.a.x;
+  const dy = wall.b.y - wall.a.y;
+  const length = Math.hypot(dx, dy);
+  const offset = 8;
+  if (length <= 0) return;
+  const normX = dx / length;
+  const normY = dy / length;
+  const perpX = -normY * offset;
+  const perpY = normX * offset;
+  g.lineBetween(wall.a.x - perpX, wall.a.y - perpY, wall.b.x + perpX, wall.b.y + perpY);
+  g.lineBetween(wall.a.x + perpX, wall.a.y + perpY, wall.b.x - perpX, wall.b.y - perpY);
+}
+
+function drawDestructibleOutline(g: Phaser.GameObjects.Graphics, wall: Wall): void {
+  g.lineStyle(Math.max(2, wall.thickness + 4), colors.destructible, 0.72);
+  g.lineBetween(wall.a.x, wall.a.y, wall.b.x, wall.b.y);
+  g.lineStyle(1, colors.destructible, 0.95);
+  g.strokeCircle(wall.a.x, wall.a.y, Math.max(5, wall.thickness / 2 + 3));
+  g.strokeCircle(wall.b.x, wall.b.y, Math.max(5, wall.thickness / 2 + 3));
 }
 
 export function drawSnapshot(g: Phaser.GameObjects.Graphics, snapshot: ServerSnapshot): void {

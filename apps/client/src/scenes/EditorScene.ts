@@ -385,17 +385,9 @@ export class EditorScene extends Phaser.Scene {
   private drawEditorWall(wall: Wall): void {
     const preset = normalizedPreset(wall);
     const selected = this.selectedIds.has(wall.id);
+    if (wall.destructible) this.drawDestructibleOutline(wall);
     
-    // Draw destructible walls completely orange
-    if (wall.destructible) {
-      // Draw the wall normally first
-      const color = preset === "door" ? colors.sensor : preset === "window" ? 0x67d7ff : colors.wall;
-      this.overlay!.lineStyle(selected ? wall.thickness + 7 : wall.thickness, selected ? colors.warning : color, selected ? 0.95 : 0.9);
-      this.overlay!.lineBetween(wall.a.x, wall.a.y, wall.b.x, wall.b.y);
-      // Then draw a thin orange outline on top
-      this.overlay!.lineStyle(2, colors.destructible, 0.95);
-      this.overlay!.lineBetween(wall.a.x, wall.a.y, wall.b.x, wall.b.y);
-    } else if (preset === "mesh") {
+    if (preset === "mesh") {
       // Draw mesh walls as X's
       const dx = wall.b.x - wall.a.x;
       const dy = wall.b.y - wall.a.y;
@@ -451,6 +443,14 @@ export class EditorScene extends Phaser.Scene {
     this.overlay!.strokeCircle(wall.b.x, wall.b.y, selected ? 8 : 5);
     const label = wall.label || presetLabel(preset);
     if (preset !== "wall" || wall.roomId || wall.destructible || selected) this.label((wall.a.x + wall.b.x) / 2 + 6, (wall.a.y + wall.b.y) / 2 + 6, `${label.toUpperCase()}${wall.destructible ? " / DESTRUCTIBLE" : ""}`);
+  }
+
+  private drawDestructibleOutline(wall: Wall): void {
+    this.overlay!.lineStyle(Math.max(2, wall.thickness + 4), colors.destructible, 0.72);
+    this.overlay!.lineBetween(wall.a.x, wall.a.y, wall.b.x, wall.b.y);
+    this.overlay!.lineStyle(1, colors.destructible, 0.95);
+    this.overlay!.strokeCircle(wall.a.x, wall.a.y, Math.max(5, wall.thickness / 2 + 3));
+    this.overlay!.strokeCircle(wall.b.x, wall.b.y, Math.max(5, wall.thickness / 2 + 3));
   }
 
   private drawSpawns(): void {
