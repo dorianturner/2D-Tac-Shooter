@@ -799,28 +799,42 @@ function resolveShot(room: RoomState, shooterId: PlayerId): void {
   shooter.ammo -= 1;
   slot.nextFireTick = room.tick + weapon.fireCooldownTicks;
   const origin = { ...shooter.position };
-  const rayEnd = add(origin, mul(angleToVector(shooter.aim), weapon.effectiveRange));
-  const hit = resolveHitscan(room, shooterId, origin, rayEnd, weapon.effectiveRange);
-  const impact: ShotImpact = { id: `${shooterId}-${room.tick}-${room.shotImpacts.length}`, tick: room.tick, shooter: shooterId, origin, end: hit.end, hit: hit.kind, ...(hit.targetId ? { targetId: hit.targetId } : {}), ...(hit.wallId ? { wallId: hit.wallId } : {}), ...(hit.cameraId ? { cameraId: hit.cameraId } : {}), ...(hit.soundSensorId ? { soundSensorId: hit.soundSensorId } : {}) };
-  room.shotImpacts.push(impact);
-  pushEvent(room, { type: "shot", tick: room.tick, impact });
-
-  if (hit.kind === "player" && hit.targetId) {
-    const target = getPlayer(room, hit.targetId);
-    target.hp = Math.max(0, target.hp - weapon.damage);
-    pushEvent(room, { type: "hit", tick: room.tick, shooter: shooterId, target: hit.targetId });
-    if (target.hp <= 0) {
-      target.alive = false;
-      pushEvent(room, { type: "kill", tick: room.tick, shooter: shooterId, target: hit.targetId });
-      finishRound(room, shooterId, "kill");
-    }
-  } else if (hit.kind === "wall" && hit.wallId) {
-    damageWall(room, hit.wallId, shooterId);
-  } else if (hit.kind === "camera" && hit.cameraId) {
-    damageCamera(room, hit.cameraId, shooterId);
-  } else if (hit.kind === "sound-sensor" && hit.soundSensorId) {
-    damageSoundSensor(room, hit.soundSensorId, shooterId);
+  const hits: Array<ReturnType<typeof resolveHitscan>> = [];
+  for (const angle of shotAngles(shooter.aim, weapon.pelletCount, weapon.spreadRadians)) {
+    const rayEnd = add(origin, mul(angleToVector(angle), weapon.effectiveRange));
+    const hit = resolveHitscan(room, shooterId, origin, rayEnd, weapon.effectiveRange);
+    hits.push(hit);
+    const impact: ShotImpact = { id: `${shooterId}-${room.tick}-${room.shotImpacts.length}`, tick: room.tick, shooter: shooterId, origin, end: hit.end, hit: hit.kind, ...(hit.targetId ? { targetId: hit.targetId } : {}), ...(hit.wallId ? { wallId: hit.wallId } : {}), ...(hit.cameraId ? { cameraId: hit.cameraId } : {}), ...(hit.soundSensorId ? { soundSensorId: hit.soundSensorId } : {}) };
+    room.shotImpacts.push(impact);
+    pushEvent(room, { type: "shot", tick: room.tick, impact });
   }
+  for (const hit of hits) {
+    if (hit.kind === "player" && hit.targetId) {
+      const target = getPlayer(room, hit.targetId);
+      if (!target.alive) continue;
+      target.hp = Math.max(0, target.hp - weapon.damage);
+      pushEvent(room, { type: "hit", tick: room.tick, shooter: shooterId, target: hit.targetId });
+      if (target.hp <= 0) {
+        target.alive = false;
+        pushEvent(room, { type: "kill", tick: room.tick, shooter: shooterId, target: hit.targetId });
+        finishRound(room, shooterId, "kill");
+        return;
+      }
+    } else if (hit.kind === "wall" && hit.wallId) {
+      damageWall(room, hit.wallId, shooterId);
+    } else if (hit.kind === "camera" && hit.cameraId) {
+      damageCamera(room, hit.cameraId, shooterId);
+    } else if (hit.kind === "sound-sensor" && hit.soundSensorId) {
+      damageSoundSensor(room, hit.soundSensorId, shooterId);
+    }
+  }
+}
+
+function shotAngles(aim: number, pelletCount: number, spreadRadians: number): number[] {
+  if (pelletCount <= 1 || spreadRadians <= 0) return [aim];
+  const step = spreadRadians / (pelletCount - 1);
+  const start = aim - spreadRadians / 2;
+  return Array.from({ length: pelletCount }, (_, index) => start + index * step);
 }
 
 function resolveHitscan(room: RoomState, shooterId: PlayerId, origin: Vec2, rayEnd: Vec2, maxRange = FIRE_RANGE): { kind: ShotImpact["hit"]; end: Vec2; targetId?: PlayerId; wallId?: string; cameraId?: string; soundSensorId?: string } {

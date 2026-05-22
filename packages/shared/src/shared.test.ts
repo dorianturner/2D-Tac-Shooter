@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { createSegmentFromPreset, createWall, deleteWallsById, hasLineOfSight, insertDoorGap, normalizeWallKind, parseMap, replaceWallSection, sampleMap, segmentPresetDefaults, slugifyMapName, validateDoorSwing, wallKindDefaults } from "./index.js";
+import { createSegmentFromPreset, createWall, deleteWallsById, hasLineOfSight, insertDoorGap, normalizeWallKind, parseMap, replaceWallSection, sampleMap, segmentPresetDefaults, slugifyMapName, validateDoorSwing, wallKindDefaults, weaponPresets } from "./index.js";
 
 describe("shared tactical primitives", () => {
   it("validates the sample map", () => {
@@ -27,6 +27,12 @@ describe("shared tactical primitives", () => {
       ]
     });
     expect(parsed.spawns.map((spawn) => spawn.id)).toEqual(["p1", "p2", "p3", "p4"]);
+  });
+
+  it("keeps shotgun vision aligned with the assault rifle and defines pellets", () => {
+    expect(weaponPresets.shotgun.visionRange).toBe(weaponPresets.assault.visionRange);
+    expect(weaponPresets.shotgun.visionFov).toBe(weaponPresets.assault.visionFov);
+    expect(weaponPresets.shotgun.pelletCount).toBeGreaterThan(1);
   });
 
   it("normalizes legacy destructible wall kinds into a property", () => {

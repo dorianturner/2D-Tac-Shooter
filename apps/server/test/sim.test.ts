@@ -941,6 +941,7 @@ describe("authoritative simulation", () => {
     expect(shotgunRoom.players.p1.ammo).toBe(6);
     applyClientMessage(shotgunRoom, "p1", { type: "command", seq: 1, tick: shotgunRoom.tick, move: { x: 0, y: 0 }, aim: 0, fire: true, use: "none" });
     stepRoom(shotgunRoom);
+    expect(shotgunRoom.replay.events.filter((event) => event.type === "shot").length).toBeGreaterThan(1);
     expect(shotgunRoom.replay.events.some((event) => event.type === "kill" && event.shooter === "p1" && event.target === "p2")).toBe(true);
     expect(shotgunRoom.round.scores.p1).toBe(1);
   });

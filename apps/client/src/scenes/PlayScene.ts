@@ -38,6 +38,7 @@ export class PlayScene extends Phaser.Scene {
   private rematchRequested = false;
   private selectedGadget: GadgetKind | "none" = "none";
   private wallAngle = 0;
+  private hudExpanded = false;
   private queuedDeploy: { gadget: GadgetKind; target: Vec2; angle?: number } | undefined = undefined;
   private pendingDeploy: { gadget: GadgetKind; seq: number } | undefined = undefined;
   private roomRefreshTimer: number | undefined = undefined;
@@ -129,6 +130,7 @@ export class PlayScene extends Phaser.Scene {
             </select>
           </label>
           <div class="loadout-note" data-loadout-note>${formatLoadout(this.currentLoadout())}</div>
+          <div class="loadout-details" data-loadout-details></div>
         </div>
         <div class="menu-actions">
           <button class="primary-action" data-action="create">Create Game</button>
@@ -166,6 +168,7 @@ export class PlayScene extends Phaser.Scene {
       this.selectedWeapon = (event.currentTarget as HTMLSelectElement).value as WeaponPresetId;
       this.handleLoadoutChange();
     });
+    this.updateLoadoutStatus();
     void this.refreshRooms();
     this.startRoomRefresh();
   }
@@ -228,6 +231,7 @@ export class PlayScene extends Phaser.Scene {
     this.renderedPlayers.clear();
     this.rematchRequested = false;
     this.selectedGadget = "none";
+    this.hudExpanded = false;
     this.queuedDeploy = undefined;
     this.pendingDeploy = undefined;
     this.socket = new WebSocket("ws://localhost:8787");
@@ -251,6 +255,7 @@ export class PlayScene extends Phaser.Scene {
       this.welcome = message;
       this.renderedWalls.clear();
       this.shell?.classList.add("in-game");
+      this.updateHudExpandedClass();
       const roomHeader = this.shell?.querySelector<HTMLElement>(".room-header");
       if (roomHeader) roomHeader.style.display = "none";
       drawMap(this.mapLayer!, message.map);
@@ -502,11 +507,20 @@ export class PlayScene extends Phaser.Scene {
       return;
     }
     this.shell?.querySelector<HTMLElement>(".match-actions")?.setAttribute("hidden", "true");
+    const objectiveText = round.objective ? `OBJ ${round.objective.owner ? `${round.objective.owner.toUpperCase()} ${Math.floor((round.objective.progressTicks / round.objective.requiredTicks) * 100)}%` : "neutral"}` : "";
+    const gadgetButtons = `
+      <button class="${this.selectedGadget === "camera" ? "selected" : ""}" data-gadget="camera">CAM ${snapshot.self.gadgets.camera}</button>
+      <button class="${this.selectedGadget === "molotov" ? "selected" : ""}" data-gadget="molotov">MOL ${snapshot.self.gadgets.molotov}</button>
+      <button class="${this.selectedGadget === "smoke" ? "selected" : ""}" data-gadget="smoke">SMK ${snapshot.self.gadgets.smoke}</button>
+      <button class="${this.selectedGadget === "wall" ? "selected" : ""}" data-gadget="wall">WALL ${snapshot.self.gadgets.wall}</button>
+      <button class="${this.selectedGadget === "sound" ? "selected" : ""}" data-gadget="sound">SND ${snapshot.self.gadgets.sound}</button>
+    `;
     this.setHudHtml(`
       <div class="hud-topline">
         <span>R${round.roundNumber}</span>
         <strong>${time}</strong>
         <span>${score}</span>
+        <button class="hud-toggle" data-action="hud-toggle">${this.hudExpanded ? "Min" : "Info"}</button>
       </div>
       <div class="hud-bars">
         <label>HP <span>${snapshot.self.hp}/5</span></label>
@@ -514,17 +528,19 @@ export class PlayScene extends Phaser.Scene {
       </div>
       <div class="hud-loadout">
         <span class="${snapshot.self.isReloading ? "warn" : ""}">${snapshot.self.isReloading ? "RELOADING" : `AMMO ${snapshot.self.ammo}/${snapshot.self.magSize}`}</span>
-        <button class="${this.selectedGadget === "camera" ? "selected" : ""}" data-gadget="camera">CAM ${snapshot.self.gadgets.camera}</button>
-        <button class="${this.selectedGadget === "molotov" ? "selected" : ""}" data-gadget="molotov">MOL ${snapshot.self.gadgets.molotov}</button>
-        <button class="${this.selectedGadget === "smoke" ? "selected" : ""}" data-gadget="smoke">SMK ${snapshot.self.gadgets.smoke}</button>
-        <button class="${this.selectedGadget === "wall" ? "selected" : ""}" data-gadget="wall">WALL ${snapshot.self.gadgets.wall}</button>
-        <button class="${this.selectedGadget === "sound" ? "selected" : ""}" data-gadget="sound">SND ${snapshot.self.gadgets.sound}</button>
+        ${gadgetButtons}
       </div>
-      <div class="hud-meta">${this.welcome.roomId} | ${snapshot.playerId.toUpperCase()} | ${snapshot.self.className} | ${snapshot.self.weaponName} | ${this.welcome.map.name}${roundResult}</div>
-      ${round.objective ? `<div class="hud-meta">Objective ${round.objective.owner ? `${round.objective.owner.toUpperCase()} ${Math.floor((round.objective.progressTicks / round.objective.requiredTicks) * 100)}%` : "neutral"}</div>` : ""}
-      <div class="hud-meta">${snapshot.nextLoadout ? `Next round: ${formatLoadout(snapshot.nextLoadout)}` : "Loadout changes at top apply next round"}</div>
+      ${objectiveText ? `<div class="hud-meta compact">${objectiveText}</div>` : ""}
+      ${this.hudExpanded ? `<div class="hud-meta">${this.welcome.roomId} | ${snapshot.playerId.toUpperCase()} | ${snapshot.self.className} | ${snapshot.self.weaponName} | ${this.welcome.map.name}${roundResult}</div>` : ""}
+      ${this.hudExpanded ? `<div class="hud-meta">${snapshot.nextLoadout ? `Next round: ${formatLoadout(snapshot.nextLoadout)}` : "Loadout changes above apply next round"}</div>` : ""}
       ${doorDebug ? `<div class="hud-meta">${doorDebug}</div>` : ""}
     `);
+    this.hud?.querySelector<HTMLButtonElement>("[data-action='hud-toggle']")?.addEventListener("click", () => {
+      this.hudExpanded = !this.hudExpanded;
+      this.updateHudExpandedClass();
+      this.updateLoadoutStatus(snapshot);
+      this.updateMatchHud(snapshot);
+    });
     this.hud?.querySelectorAll<HTMLButtonElement>("[data-gadget]").forEach((button) => {
       button.addEventListener("click", () => this.toggleGadget(button.dataset.gadget as GadgetKind));
     });
@@ -552,8 +568,10 @@ export class PlayScene extends Phaser.Scene {
     const title = this.shell?.querySelector<HTMLElement>("[data-loadout-title]");
     const mode = this.shell?.querySelector<HTMLElement>("[data-loadout-mode]");
     const note = this.shell?.querySelector<HTMLElement>("[data-loadout-note]");
+    const details = this.shell?.querySelector<HTMLElement>("[data-loadout-details]");
     if (!title || !mode || !note) return;
     const selectedLoadout = this.currentLoadout();
+    if (details) details.innerHTML = loadoutDetailsHtml(selectedLoadout);
     if (!this.welcome) {
       title.textContent = "Starting Loadout";
       mode.textContent = "used when creating or joining";
@@ -576,6 +594,10 @@ export class PlayScene extends Phaser.Scene {
     }
     note.textContent = `Will apply next round: ${formatLoadout(selectedLoadout)}`;
   }
+
+  private updateHudExpandedClass(): void {
+    this.shell?.classList.toggle("hud-expanded", this.hudExpanded);
+  }
 }
 
 function formatLoadout(loadout: PlayerLoadoutSelection): string {
@@ -586,6 +608,19 @@ function formatLoadout(loadout: PlayerLoadoutSelection): string {
 
 function loadoutMatchesSelf(loadout: PlayerLoadoutSelection, self: PlayerState): boolean {
   return (loadout.classId ?? "operator") === self.classId && (loadout.weaponId ?? "assault") === self.weaponId;
+}
+
+function loadoutDetailsHtml(loadout: PlayerLoadoutSelection): string {
+  const playerClass = playerClassPresets[loadout.classId ?? "operator"] ?? playerClassPresets.operator;
+  const weapon = weaponPresets[loadout.weaponId ?? "assault"] ?? weaponPresets.assault;
+  const gadgets = Object.entries(playerClass.gadgets)
+    .filter(([, count]) => count > 0)
+    .map(([kind, count]) => `${kind.toUpperCase()} ${count}`)
+    .join(" / ");
+  return `
+    <div><strong>${playerClass.name}</strong><span>${gadgets || "No gadgets"}</span></div>
+    <div><strong>${weapon.name}</strong><span>DMG ${weapon.damage} | RNG ${weapon.effectiveRange} | MAG ${weapon.magSize} | VISION ${weapon.visionRange}px / ${Math.round((weapon.visionFov * 180) / Math.PI)}deg${weapon.pelletCount > 1 ? ` | ${weapon.pelletCount} pellets` : ""}</span></div>
+  `;
 }
 
 function roomToPickable(room: RoomSummary) {

@@ -9,7 +9,9 @@ export const weaponPresets: Record<WeaponPresetId, WeaponDefinition> = {
     fireCooldownTicks: 6,
     magSize: 10,
     visionRange: 260,
-    visionFov: (100 * Math.PI) / 180
+    visionFov: (100 * Math.PI) / 180,
+    pelletCount: 1,
+    spreadRadians: 0
   },
   sniper: {
     id: "sniper",
@@ -19,7 +21,9 @@ export const weaponPresets: Record<WeaponPresetId, WeaponDefinition> = {
     fireCooldownTicks: 45,
     magSize: 5,
     visionRange: 420,
-    visionFov: (44 * Math.PI) / 180
+    visionFov: (44 * Math.PI) / 180,
+    pelletCount: 1,
+    spreadRadians: 0
   },
   shotgun: {
     id: "shotgun",
@@ -28,8 +32,10 @@ export const weaponPresets: Record<WeaponPresetId, WeaponDefinition> = {
     effectiveRange: 190,
     fireCooldownTicks: 32,
     magSize: 6,
-    visionRange: 190,
-    visionFov: (150 * Math.PI) / 180
+    visionRange: 260,
+    visionFov: (100 * Math.PI) / 180,
+    pelletCount: 7,
+    spreadRadians: (10 * Math.PI) / 180
   }
 };
 

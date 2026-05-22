@@ -136,6 +136,8 @@ export interface WeaponDefinition {
   magSize: number;
   visionRange: number;
   visionFov: number;
+  pelletCount: number;
+  spreadRadians: number;
 }
 
 export interface PlayerClassDefinition {
