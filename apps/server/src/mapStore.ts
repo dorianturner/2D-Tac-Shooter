@@ -4,7 +4,7 @@ import { fileURLToPath } from "node:url";
 import { parseMap, type MapDefinition } from "@tac/shared";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
-export const defaultMapsDir = join(repoRoot, "maps");
+export const defaultMapsDir = process.env.MAPS_DIR ? resolve(process.env.MAPS_DIR) : join(repoRoot, "maps");
 const mapIdPattern = /^[a-z0-9][a-z0-9-]*$/;
 
 export interface MapSummary {

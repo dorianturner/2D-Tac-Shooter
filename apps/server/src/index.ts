@@ -1,4 +1,7 @@
 import { createServer } from "node:http";
+import { createReadStream } from "node:fs";
+import { stat } from "node:fs/promises";
+import { extname, join, normalize, resolve } from "node:path";
 import { WebSocketServer, type WebSocket } from "ws";
 import type { ClientHello, ClientMessage, PlayerId, RoomSummary, ServerMessage } from "@tac/shared";
 import { handleCorsPreflight } from "./cors.js";
@@ -6,6 +9,7 @@ import { listMaps, readMap, writeMap } from "./mapStore.js";
 import { applyClientMessage, createRoom, isExpiredUnfilledLobby, joinRoom, snapshotFor, stepRoom, TICK_MS, type RoomState } from "./sim.js";
 
 const PORT = Number(process.env.PORT ?? 8787);
+const clientDist = resolve(process.cwd(), "apps/client/dist");
 const rooms = new Map<string, RoomState>();
 const sockets = new Map<WebSocket, { roomId: string; playerId: PlayerId }>();
 const reconnect = new Map<string, { roomId: string; playerId: PlayerId }>();
@@ -72,6 +76,10 @@ async function handleHttp(request: import("node:http").IncomingMessage, response
       sendJson(response, 200, { maps: await listMaps() });
       return;
     }
+    if (request.method === "GET" && url.pathname === "/api/health") {
+      sendJson(response, 200, { ok: true, uptimeSeconds: Math.round(process.uptime()), rooms: rooms.size });
+      return;
+    }
     if (request.method === "GET" && url.pathname === "/api/rooms") {
       cleanupExpiredRooms();
       sendJson(response, 200, { rooms: listRooms() });
@@ -87,10 +95,65 @@ async function handleHttp(request: import("node:http").IncomingMessage, response
       sendJson(response, 200, await writeMap(match[1], JSON.parse(body)));
       return;
     }
+    if (request.method === "GET" || request.method === "HEAD") {
+      await sendStaticClient(response, url.pathname, request.method === "HEAD");
+      return;
+    }
     sendJson(response, 404, { error: "Not found" });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown error";
     sendJson(response, 400, { error: message });
+  }
+}
+
+async function sendStaticClient(response: import("node:http").ServerResponse, pathname: string, headOnly: boolean): Promise<void> {
+  const filePath = await staticFileForPath(pathname);
+  if (!filePath) {
+    sendJson(response, 404, { error: "Not found" });
+    return;
+  }
+  response.writeHead(200, { "Content-Type": contentType(filePath) });
+  if (headOnly) {
+    response.end();
+    return;
+  }
+  createReadStream(filePath).pipe(response);
+}
+
+async function staticFileForPath(pathname: string): Promise<string | null> {
+  const decoded = decodeURIComponent(pathname);
+  const requested = normalize(decoded).replace(/^(\.\.(\/|\\|$))+/, "");
+  const filePath = resolve(clientDist, requested === "/" ? "index.html" : requested.slice(1));
+  if (!filePath.startsWith(clientDist)) return null;
+  if (await isFile(filePath)) return filePath;
+  const indexPath = join(clientDist, "index.html");
+  return await isFile(indexPath) ? indexPath : null;
+}
+
+async function isFile(filePath: string): Promise<boolean> {
+  try {
+    return (await stat(filePath)).isFile();
+  } catch {
+    return false;
+  }
+}
+
+function contentType(filePath: string): string {
+  switch (extname(filePath)) {
+    case ".html":
+      return "text/html; charset=utf-8";
+    case ".js":
+      return "text/javascript; charset=utf-8";
+    case ".css":
+      return "text/css; charset=utf-8";
+    case ".json":
+      return "application/json; charset=utf-8";
+    case ".png":
+      return "image/png";
+    case ".svg":
+      return "image/svg+xml";
+    default:
+      return "application/octet-stream";
   }
 }
 

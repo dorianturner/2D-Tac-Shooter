@@ -18,7 +18,7 @@ export function websocketUrl(): string {
     return `${protocol}//${window.location.hostname}:${serverPort()}`;
   }
   const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-  return `${protocol}//${window.location.host}`;
+  return `${protocol}//${window.location.host}/ws`;
 }
 
 function usesSeparateDevServer(): boolean {
