@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { createWall, deleteWallsById, hasLineOfSight, insertDoorGap, normalizeWallKind, parseMap, replaceWallSection, sampleMap, slugifyMapName, validateDoorSwing, wallKindDefaults } from "./index.js";
+import { createSegmentFromPreset, createWall, deleteWallsById, hasLineOfSight, insertDoorGap, normalizeWallKind, parseMap, replaceWallSection, sampleMap, segmentPresetDefaults, slugifyMapName, validateDoorSwing, wallKindDefaults } from "./index.js";
 
 describe("shared tactical primitives", () => {
   it("validates the sample map", () => {
@@ -10,19 +10,25 @@ describe("shared tactical primitives", () => {
   });
 
   it("accepts editor wall metadata while keeping older maps valid", () => {
-    expect(parseMap({ ...sampleMap, gridSize: 32, walls: [{ ...sampleMap.walls[0]!, kind: "mesh", label: "mesh" }] }).walls[0]?.kind).toBe("mesh");
+    expect(parseMap({ ...sampleMap, gridSize: 32, walls: [{ ...sampleMap.walls[0]!, kind: "mesh", label: "mesh" }] }).walls[0]?.preset).toBe("mesh");
     const { gridSize: _gridSize, ...legacyMap } = sampleMap;
     expect(parseMap({ ...legacyMap, walls: legacyMap.walls.map(({ kind: _kind, ...wall }) => wall) }).id).toBe("prototype-one");
   });
 
   it("normalizes legacy destructible wall kinds into a property", () => {
     const normalized = normalizeWallKind({ ...sampleMap.walls[0]!, kind: "destructible" as "solid", label: "destructible", destructible: false });
-    expect(normalized.kind).toBe("solid");
+    expect(normalized.preset).toBe("breakable-wall");
     expect(normalized.destructible).toBe(true);
   });
 
   it("uses mesh defaults that block movement but not vision", () => {
-    expect(wallKindDefaults("mesh")).toMatchObject({ blocksMovement: true, blocksVision: false, destructible: false });
+    expect(wallKindDefaults("mesh")).toMatchObject({ blocksMovement: true, blocksVision: false, blocksShooting: false, destructible: false });
+  });
+
+  it("creates segment presets with explicit gameplay properties", () => {
+    expect(segmentPresetDefaults.window).toMatchObject({ blocksVision: false, blocksMovement: true, blocksShooting: true });
+    expect(segmentPresetDefaults.mesh).toMatchObject({ blocksVision: false, blocksMovement: true, blocksShooting: false, thickness: 5 });
+    expect(createSegmentFromPreset("breakable", "breakable-wall", { x: 0, y: 0 }, { x: 10, y: 0 })).toMatchObject({ preset: "breakable-wall", destructible: true, blocksShooting: true });
   });
 
   it("accepts destructible as a property on all wall kinds", () => {
@@ -34,7 +40,8 @@ describe("shared tactical primitives", () => {
     ];
     const parsed = parseMap({ ...sampleMap, walls });
     expect(parsed.walls.every((wall) => wall.destructible)).toBe(true);
-    expect(parsed.walls.map((wall) => wall.kind)).toEqual(["solid", "transparent", "mesh", "door"]);
+    expect(parsed.walls.map((wall) => wall.preset)).toEqual(["breakable-wall", "window", "mesh", "door"]);
+    expect(parsed.walls.map((wall) => wall.blocksShooting)).toEqual([true, true, false, true]);
   });
 
   it("blocks and opens line of sight after destruction", () => {
@@ -51,14 +58,14 @@ describe("shared tactical primitives", () => {
   it("inserts a door by creating a real geometry gap", () => {
     const walls = [createWall("wall-1", "solid", { x: 0, y: 0 }, { x: 100, y: 0 }, 10)];
     const next = insertDoorGap(walls, "wall-1", { x: 50, y: 0 }, 30, "door-1");
-    expect(next.map((wall) => wall.kind).sort()).toEqual(["door", "solid", "solid"]);
+    expect(next.map((wall) => wall.preset).sort()).toEqual(["door", "wall", "wall"]);
     expect(next.some((wall) => wall.id === "wall-1")).toBe(false);
-    expect(next.find((wall) => wall.kind === "door")?.blocksMovement).toBe(false);
+    expect(next.find((wall) => wall.preset === "door")?.blocksMovement).toBe(false);
   });
 
   it("validates door swing clearance against blocking geometry", () => {
     const clearWalls = insertDoorGap([createWall("wall-1", "solid", { x: 0, y: 50 }, { x: 120, y: 50 }, 10)], "wall-1", { x: 60, y: 50 }, 30, "door-clear");
-    expect(validateDoorSwing(clearWalls, clearWalls.find((wall) => wall.kind === "door")!)).toEqual({ valid: true });
+    expect(validateDoorSwing(clearWalls, clearWalls.find((wall) => wall.preset === "door")!)).toEqual({ valid: true });
 
     const northBlocked = [
       createWall("north", "solid", { x: 0, y: 0 }, { x: 160, y: 0 }, 18),
@@ -75,7 +82,7 @@ describe("shared tactical primitives", () => {
 
   it("keeps the saved test map free of door swing blockers", () => {
     const map = parseMap(JSON.parse(readFileSync(resolve(process.cwd(), "../../maps/test-map.json"), "utf8")));
-    const blockedDoor = map.walls.find((wall) => wall.kind === "door" && !validateDoorSwing(map.walls, wall).valid);
+    const blockedDoor = map.walls.find((wall) => wall.preset === "door" && !validateDoorSwing(map.walls, wall).valid);
     expect(blockedDoor).toBeUndefined();
   });
 
@@ -92,7 +99,7 @@ describe("shared tactical primitives", () => {
     const walls = [createWall("wall-1", "solid", { x: 0, y: 0 }, { x: 100, y: 0 })];
     const replacement = createWall("mesh-1", "mesh", { x: 40, y: 0 }, { x: 70, y: 0 });
     const next = replaceWallSection(walls, replacement);
-    expect(next.map((wall) => wall.kind).sort()).toEqual(["mesh", "solid", "solid"]);
+    expect(next.map((wall) => wall.preset).sort()).toEqual(["mesh", "wall", "wall"]);
     expect(next.find((wall) => wall.id === "mesh-1")?.blocksVision).toBe(false);
   });
 

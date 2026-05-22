@@ -11,14 +11,14 @@ export const sampleMap: MapDefinition = {
     { id: "east-room", name: "Orange Setup", position: { x: 520, y: 96 }, size: { x: 344, y: 424 } }
   ],
   walls: [
-    { id: "north", a: { x: 80, y: 80 }, b: { x: 880, y: 80 }, thickness: 18, blocksVision: true, blocksMovement: true, destructible: false },
-    { id: "south", a: { x: 80, y: 560 }, b: { x: 880, y: 560 }, thickness: 18, blocksVision: true, blocksMovement: true, destructible: false },
-    { id: "west", a: { x: 80, y: 80 }, b: { x: 80, y: 560 }, thickness: 18, blocksVision: true, blocksMovement: true, destructible: false },
-    { id: "east", a: { x: 880, y: 80 }, b: { x: 880, y: 560 }, thickness: 18, blocksVision: true, blocksMovement: true, destructible: false },
-    { id: "mid-vertical", a: { x: 480, y: 110 }, b: { x: 480, y: 300 }, thickness: 16, blocksVision: true, blocksMovement: true, destructible: false },
-    { id: "breach-panel", a: { x: 480, y: 340 }, b: { x: 480, y: 500 }, thickness: 16, blocksVision: true, blocksMovement: true, destructible: true },
-    { id: "left-cover", a: { x: 240, y: 240 }, b: { x: 360, y: 240 }, thickness: 14, blocksVision: true, blocksMovement: true, destructible: false },
-    { id: "right-cover", a: { x: 600, y: 400 }, b: { x: 720, y: 400 }, thickness: 14, blocksVision: true, blocksMovement: true, destructible: false }
+    { id: "north", a: { x: 80, y: 80 }, b: { x: 880, y: 80 }, thickness: 18, blocksVision: true, blocksMovement: true, blocksShooting: true, destructible: false },
+    { id: "south", a: { x: 80, y: 560 }, b: { x: 880, y: 560 }, thickness: 18, blocksVision: true, blocksMovement: true, blocksShooting: true, destructible: false },
+    { id: "west", a: { x: 80, y: 80 }, b: { x: 80, y: 560 }, thickness: 18, blocksVision: true, blocksMovement: true, blocksShooting: true, destructible: false },
+    { id: "east", a: { x: 880, y: 80 }, b: { x: 880, y: 560 }, thickness: 18, blocksVision: true, blocksMovement: true, blocksShooting: true, destructible: false },
+    { id: "mid-vertical", a: { x: 480, y: 110 }, b: { x: 480, y: 300 }, thickness: 16, blocksVision: true, blocksMovement: true, blocksShooting: true, destructible: false },
+    { id: "breach-panel", a: { x: 480, y: 340 }, b: { x: 480, y: 500 }, thickness: 16, blocksVision: true, blocksMovement: true, blocksShooting: true, destructible: true },
+    { id: "left-cover", a: { x: 240, y: 240 }, b: { x: 360, y: 240 }, thickness: 14, blocksVision: true, blocksMovement: true, blocksShooting: true, destructible: false },
+    { id: "right-cover", a: { x: 600, y: 400 }, b: { x: 720, y: 400 }, thickness: 14, blocksVision: true, blocksMovement: true, blocksShooting: true, destructible: false }
   ],
   spawns: [
     { id: "p1", team: "blue", position: { x: 180, y: 320 }, angle: 0 },

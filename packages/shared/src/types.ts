@@ -3,6 +3,7 @@ export type PlayerId = "p1" | "p2";
 export type RoundPhase = "lobby" | "countdown" | "active" | "ended";
 export type SensorKind = "camera" | "motion" | "sound";
 export type UtilityKind = "emp" | "breach" | "fake-noise" | "smoke" | "flash" | "signal-spoof";
+export type SegmentPresetId = "wall" | "window" | "mesh" | "breakable-wall" | "door" | "deployable-wall";
 export type WallKind = "solid" | "transparent" | "door" | "mesh";
 export type GadgetKind = "camera" | "molotov" | "smoke" | "wall" | "sound";
 
@@ -11,8 +12,10 @@ export interface Vec2 {
   y: number;
 }
 
-export interface Wall {
+export interface Segment {
   id: string;
+  preset?: SegmentPresetId;
+  /** @deprecated use preset plus explicit segment properties. */
   kind?: WallKind;
   label?: string;
   roomId?: string;
@@ -33,11 +36,14 @@ export interface Wall {
   thickness: number;
   blocksVision: boolean;
   blocksMovement: boolean;
+  blocksShooting: boolean;
   destructible: boolean;
   hp?: number;
   maxHp?: number;
   destroyed?: boolean;
 }
+
+export type Wall = Segment;
 
 export interface Spawn {
   id: PlayerId;

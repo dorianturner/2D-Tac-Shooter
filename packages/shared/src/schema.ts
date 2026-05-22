@@ -6,6 +6,7 @@ const vec2 = z.object({ x: z.number(), y: z.number() });
 
 export const wallSchema = z.object({
   id: z.string().min(1),
+  preset: z.enum(["wall", "window", "mesh", "breakable-wall", "door", "deployable-wall"]).optional(),
   kind: z.enum(["solid", "destructible", "transparent", "door", "mesh"]).optional(),
   label: z.string().optional(),
   roomId: z.string().optional(),
@@ -20,6 +21,7 @@ export const wallSchema = z.object({
   thickness: z.number().positive(),
   blocksVision: z.boolean(),
   blocksMovement: z.boolean(),
+  blocksShooting: z.boolean().optional(),
   destructible: z.boolean(),
   hp: z.number().optional(),
   maxHp: z.number().optional(),

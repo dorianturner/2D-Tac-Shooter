@@ -1,5 +1,5 @@
 import Phaser from "phaser";
-import { distance, lineIntersection, normalize, type GadgetKind, type PlayerCommand, type PlayerId, type PlayerState, type RoomSummary, type ServerMessage, type ServerSnapshot, type ServerWelcome, type ShotImpact, type Vec2, type Wall, TICK_RATE } from "@tac/shared";
+import { distance, isHingedDoorSegment, lineIntersection, normalize, type GadgetKind, type PlayerCommand, type PlayerId, type PlayerState, type RoomSummary, type ServerMessage, type ServerSnapshot, type ServerWelcome, type ShotImpact, type Vec2, type Wall, TICK_RATE } from "@tac/shared";
 import { listMaps, listRooms } from "../editorApi";
 import { mapSummaryToPickable, pickFromList } from "../fuzzyPicker";
 import { colors, drawDeployedCamera, drawFogOfWar, drawMap, drawMolotovZone, drawPlayer, drawSmokeZone, drawSoundSensorZone } from "../render";
@@ -275,8 +275,7 @@ export class PlayScene extends Phaser.Scene {
       if (!liveIds.has(id)) this.renderedWalls.delete(id);
     }
     return walls.map((wall) => {
-      const kind = wall.kind ?? (wall.blocksVision ? "solid" : "transparent");
-      if (kind !== "door" || wall.destroyed) {
+      if (!isHingedDoorSegment(wall) || wall.destroyed) {
         this.renderedWalls.set(wall.id, structuredClone(wall));
         return wall;
       }
@@ -446,7 +445,7 @@ export class PlayScene extends Phaser.Scene {
     const score = `${round.scores.p1}-${round.scores.p2}`;
     const doorDebug = snapshot.debug
       ? snapshot.map.walls
-        .filter((wall) => wall.kind === "door")
+        .filter((wall) => isHingedDoorSegment(wall))
         .slice(0, 3)
         .map((door) => `${door.id}: a=${(door.currentAngle ?? 0).toFixed(2)} v=${(door.angularVelocity ?? 0).toFixed(3)} c=${door.pushContactTicks ?? 0} b=${door.blockedUntilTick ?? 0}`)
         .join(" | ")
@@ -550,7 +549,7 @@ function firstThrowHit(walls: Wall[], origin: Vec2, target: Vec2, ignoreWallId?:
 }
 
 function throwBlockingWall(wall: Wall): boolean {
-  return wall.kind === "door" || wall.kind === "solid" || wall.blocksVision;
+  return !wall.destroyed && (isHingedDoorSegment(wall) || wall.blocksVision);
 }
 
 function withPlacementValidity(walls: Wall[], origin: Vec2, target: GadgetPreviewTarget): GadgetPreviewTarget {
@@ -575,8 +574,7 @@ function firstPlacementBlock(walls: Wall[], origin: Vec2, target: Vec2): Vec2 | 
 }
 
 function placementBlockingWall(wall: Wall): boolean {
-  if (wall.kind === "mesh") return false;
-  return wall.kind === "door" || wall.kind === "transparent" || wall.blocksVision || wall.kind === "solid";
+  return !wall.destroyed && (isHingedDoorSegment(wall) || wall.blocksShooting || wall.blocksVision);
 }
 
 function reflect(direction: Vec2, wall: Wall): Vec2 {

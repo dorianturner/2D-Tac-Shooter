@@ -1,5 +1,5 @@
 import Phaser from "phaser";
-import type { DeployedCamera, Detection, MapDefinition, MolotovZone, ServerSnapshot, SmokeZone, SoundSensorZone, Vec2, Wall } from "@tac/shared";
+import { segmentPreset, type DeployedCamera, type Detection, type MapDefinition, type MolotovZone, type ServerSnapshot, type SmokeZone, type SoundSensorZone, type Vec2, type Wall } from "@tac/shared";
 
 export const colors = {
   bg: 0x05070a,
@@ -27,10 +27,10 @@ export function drawMap(g: Phaser.GameObjects.Graphics, map: MapDefinition): voi
 }
 
 export function drawWall(g: Phaser.GameObjects.Graphics, wall: Wall): void {
-  const kind = wall.kind ?? (wall.blocksVision ? "solid" : "transparent");
+  const preset = segmentPreset(wall);
   
   // Handle mesh walls with X pattern
-  if (kind === "mesh") {
+  if (preset === "mesh") {
     g.lineStyle(Math.max(1, wall.thickness / 2), 0xb6f2df, 0.9);
     const dx = wall.b.x - wall.a.x;
     const dy = wall.b.y - wall.a.y;
@@ -56,12 +56,12 @@ export function drawWall(g: Phaser.GameObjects.Graphics, wall: Wall): void {
   }
   
   // Handle other wall types
-  const color = wall.destroyed ? colors.destroyed : kind === "door" ? colors.sensor : kind === "transparent" ? 0x67d7ff : colors.wall;
-  const alpha = wall.destroyed ? 0.18 : kind === "door" ? 0.72 : kind === "transparent" ? 0.48 : 0.92;
+  const color = wall.destroyed ? colors.destroyed : preset === "door" ? colors.sensor : preset === "window" ? 0x67d7ff : colors.wall;
+  const alpha = wall.destroyed ? 0.18 : preset === "door" ? 0.72 : preset === "window" ? 0.48 : 0.92;
   g.lineStyle(Math.max(2, wall.thickness), color, alpha);
   g.lineBetween(wall.a.x, wall.a.y, wall.b.x, wall.b.y);
   
-  if (kind === "transparent") {
+  if (preset === "window") {
     g.lineStyle(1, color, 0.8);
     g.strokeCircle((wall.a.x + wall.b.x) / 2, (wall.a.y + wall.b.y) / 2, 7);
   }

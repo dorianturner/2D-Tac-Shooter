@@ -1,4 +1,4 @@
-import { add, angleToVector, distance, distanceToSegment, lineIntersection, mul, normalize, type MapDefinition, type Vec2, type Wall } from "@tac/shared";
+import { add, angleToVector, createSegmentFromPreset, distance, distanceToSegment, isHingedDoorSegment, lineIntersection, mul, normalize, segmentBlocksMovement, type MapDefinition, type Vec2, type Wall } from "@tac/shared";
 import { DEPLOYABLE_WALL_HP, DEPLOYABLE_WALL_LENGTH, DEPLOYABLE_WALL_THICKNESS, PLAYER_RADIUS } from "./config.js";
 
 export interface ThrownTarget {
@@ -47,38 +47,30 @@ export function resolveThrownTarget(map: MapDefinition, origin: Vec2, target: Ve
 }
 
 export function isPlacementClear(map: MapDefinition, position: Vec2, radius = PLAYER_RADIUS): boolean {
-  return !map.walls.some((wall) => !wall.destroyed && wall.blocksMovement && distanceToSegment(position, wall.a, wall.b) < radius + wall.thickness / 2);
+  return !map.walls.some((wall) => segmentBlocksMovement(wall) && distanceToSegment(position, wall.a, wall.b) < radius + wall.thickness / 2);
 }
 
 export function hasPlacementLineOfSight(map: MapDefinition, origin: Vec2, target: Vec2): boolean {
-  return !map.walls.some((wall) => !wall.destroyed && placementBlockingWall(wall) && lineIntersection(origin, target, wall.a, wall.b));
+  return !map.walls.some((wall) => placementBlockingWall(wall) && lineIntersection(origin, target, wall.a, wall.b));
 }
 
 export function createDeployableWall(id: string, center: Vec2, angle: number): Wall {
   const direction = angleToVector(angle);
   const half = DEPLOYABLE_WALL_LENGTH / 2;
-  return {
-    id,
-    kind: "solid",
+  return createSegmentFromPreset(id, "deployable-wall", add(center, mul(direction, -half)), add(center, mul(direction, half)), {
     label: "DEPLOYABLE",
-    a: add(center, mul(direction, -half)),
-    b: add(center, mul(direction, half)),
     thickness: DEPLOYABLE_WALL_THICKNESS,
-    blocksVision: true,
-    blocksMovement: true,
-    destructible: true,
     hp: DEPLOYABLE_WALL_HP,
     maxHp: DEPLOYABLE_WALL_HP
-  };
+  });
 }
 
 function throwBlockingWall(wall: Wall): boolean {
-  return wall.kind === "door" || wall.kind === "solid" || wall.blocksVision;
+  return !wall.destroyed && (isHingedDoorSegment(wall) || wall.blocksVision);
 }
 
 function placementBlockingWall(wall: Wall): boolean {
-  if (wall.kind === "mesh") return false;
-  return wall.kind === "door" || wall.kind === "transparent" || wall.blocksVision || wall.kind === "solid";
+  return !wall.destroyed && (isHingedDoorSegment(wall) || wall.blocksShooting || wall.blocksVision);
 }
 
 function firstThrowHit(map: MapDefinition, from: Vec2, to: Vec2, ignoreWallId?: string): { wall: Wall; point: Vec2; distance: number } | null {

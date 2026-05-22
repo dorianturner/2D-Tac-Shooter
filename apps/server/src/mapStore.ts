@@ -49,6 +49,13 @@ export async function writeMap(id: string, value: unknown, mapsDir = defaultMaps
     throw new Error("Map id must match the request path");
   }
   await mkdir(mapsDir, { recursive: true });
-  await writeFile(join(mapsDir, `${safeId}.json`), `${JSON.stringify(map, null, 2)}\n`, "utf8");
+  await writeFile(join(mapsDir, `${safeId}.json`), `${JSON.stringify(mapForDisk(map), null, 2)}\n`, "utf8");
   return map;
+}
+
+function mapForDisk(map: MapDefinition): MapDefinition {
+  return {
+    ...map,
+    walls: map.walls.map(({ kind: _legacyKind, ...wall }) => wall)
+  };
 }

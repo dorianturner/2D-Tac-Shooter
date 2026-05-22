@@ -3,12 +3,17 @@ import {
   angleToVector,
   distance,
   distanceToSegment,
+  isHingedDoorSegment,
+  isShootableDestructibleSegment,
   hasLineOfSight,
   lineIntersection,
   mul,
   normalize,
   pointInCone,
   sampleMap,
+  segmentBlocksMovement,
+  segmentBlocksShooting,
+  segmentPreset,
   type AuthoritativeEvent,
   type ActionResult,
   type ClientMessage,
@@ -92,6 +97,22 @@ type PendingAction =
 type ActionRejectReason = NonNullable<ActionResult["reason"]>;
 
 type DeployResult = { accepted: true } | { accepted: false; reason: ActionRejectReason };
+
+interface GadgetDeployAction {
+  target: Vec2;
+  angle: number;
+}
+
+interface ResolvedDeployTarget {
+  position: Vec2;
+}
+
+interface GadgetStrategy {
+  kind: GadgetKind;
+  range: number;
+  canDeploy(room: RoomState, player: PlayerState, action: GadgetDeployAction): DeployResult & Partial<ResolvedDeployTarget>;
+  deploy(room: RoomState, player: PlayerState, action: GadgetDeployAction, resolved: ResolvedDeployTarget): DeployResult;
+}
 
 interface DesiredMovement {
   player: PlayerState;
@@ -339,7 +360,7 @@ export function initializeRuntimeMap(map: MapDefinition): MapDefinition {
     ...map,
     walls: map.walls.map((wall) => {
       const withHp = initializeWallHp(wall);
-      if (withHp.kind !== "door") return withHp;
+      if (!isHingedDoorSegment(withHp)) return withHp;
       const hinge = withHp.hinge ?? withHp.closedA ?? withHp.a;
       const closedB = withHp.closedB ?? withHp.b;
       return {
@@ -357,6 +378,7 @@ export function initializeRuntimeMap(map: MapDefinition): MapDefinition {
         blockedUntilTick: withHp.blockedUntilTick ?? 0,
         blocksMovement: true,
         blocksVision: true,
+        blocksShooting: true,
         a: hinge,
         b: rotateDoorEndpoint(hinge, closedB, withHp.currentAngle ?? 0)
       };
@@ -365,11 +387,11 @@ export function initializeRuntimeMap(map: MapDefinition): MapDefinition {
 }
 
 function initializeWallHp(wall: MapDefinition["walls"][number]): MapDefinition["walls"][number] {
-  if (!wall.destructible || wall.kind === "door") {
+  if (!wall.destructible || isHingedDoorSegment(wall)) {
     const { hp: _hp, maxHp: _maxHp, ...runtimeWall } = wall;
     return runtimeWall;
   }
-  const maxHp = wall.kind === "mesh" || wall.kind === "transparent" ? 1 : 5;
+  const maxHp = wall.maxHp ?? (segmentPreset(wall) === "mesh" || segmentPreset(wall) === "window" ? 1 : 5);
   return { ...wall, maxHp, hp: wall.hp ?? maxHp };
 }
 
@@ -377,7 +399,7 @@ function collectDoorPushes(room: RoomState, current: Vec2, desired: Vec2, delta:
   const moveDistance = Math.hypot(delta.x, delta.y);
   if (moveDistance < 0.01) return;
   for (const door of room.map.walls) {
-    if (door.kind !== "door" || !door.hinge || door.destroyed) continue;
+    if (!isHingedDoorSegment(door) || !door.hinge || door.destroyed) continue;
     const threshold = PLAYER_RADIUS + door.thickness / 2 + DOOR_PUSH_SKIN;
     const currentDistance = distanceToSegment(current, door.a, door.b);
     const desiredDistance = distanceToSegment(desired, door.a, door.b);
@@ -429,16 +451,16 @@ function moveWithCapsuleCollision(map: MapDefinition, current: Vec2, desired: Ve
     y: Math.max(radius, Math.min(map.bounds.height - radius, desired.y))
   };
   for (const wall of map.walls) {
-    if (!wall.blocksMovement || wall.destroyed) continue;
-    const threshold = radius + wall.thickness / 2 + (wall.kind === "door" ? DOOR_COLLISION_SKIN : 0);
+    if (!segmentBlocksMovement(wall)) continue;
+    const threshold = radius + wall.thickness / 2 + (isHingedDoorSegment(wall) ? DOOR_COLLISION_SKIN : 0);
     const closest = closestPointOnSegment(resolved, wall.a, wall.b);
     const separation = { x: resolved.x - closest.x, y: resolved.y - closest.y };
     const separationDistance = Math.hypot(separation.x, separation.y);
     const crossed = lineIntersection(current, resolved, wall.a, wall.b);
-    if (separationDistance >= threshold && (!crossed || wall.kind === "door")) continue;
+    if (separationDistance >= threshold && (!crossed || isHingedDoorSegment(wall))) continue;
     const normal = separationDistance > 0.0001 ? { x: separation.x / separationDistance, y: separation.y / separationDistance } : normalFromSegmentToPoint(current, wall.a, wall.b);
     const overlap = separationDistance < threshold ? threshold - separationDistance : 0;
-    if (overlap <= 0 && wall.kind === "door") continue;
+    if (overlap <= 0 && isHingedDoorSegment(wall)) continue;
     resolved = {
       x: Math.max(radius, Math.min(map.bounds.width - radius, resolved.x + normal.x * (overlap + 0.01))),
       y: Math.max(radius, Math.min(map.bounds.height - radius, resolved.y + normal.y * (overlap + 0.01)))
@@ -449,7 +471,7 @@ function moveWithCapsuleCollision(map: MapDefinition, current: Vec2, desired: Ve
 
 function integrateDoors(room: RoomState): void {
   for (const door of room.map.walls) {
-    if (door.kind !== "door" || !door.hinge || !door.closedB || door.destroyed) continue;
+    if (!isHingedDoorSegment(door) || !door.hinge || !door.closedB || door.destroyed) continue;
     if (door.targetAngle !== undefined) {
       const delta = door.targetAngle - (door.currentAngle ?? 0);
       if (Math.abs(delta) < 0.015 && Math.abs(door.angularVelocity ?? 0) < 0.006) {
@@ -492,7 +514,7 @@ function resolvePlayerDoorOverlaps(room: RoomState): void {
     if (!player.alive) continue;
     let position = player.position;
     for (const door of room.map.walls) {
-      if (door.kind !== "door" || door.destroyed || !door.blocksMovement) continue;
+      if (!isHingedDoorSegment(door) || !segmentBlocksMovement(door)) continue;
       const threshold = PLAYER_RADIUS + door.thickness / 2 + DOOR_COLLISION_SKIN;
       const closest = closestPointOnSegment(position, door.a, door.b);
       const separation = { x: position.x - closest.x, y: position.y - closest.y };
@@ -514,8 +536,8 @@ function doorWouldHitWall(room: RoomState, door: MapDefinition["walls"][number],
   if (!door.hinge) return false;
   const threshold = door.thickness / 2;
   return room.map.walls.some((wall) => {
-    if (wall.id === door.id || wall.destroyed || !wall.blocksMovement) return false;
-    if (wall.kind === "door" && (!wall.hinge || !wall.closedB)) return false;
+    if (wall.id === door.id || !segmentBlocksMovement(wall)) return false;
+    if (isHingedDoorSegment(wall) && (!wall.hinge || !wall.closedB)) return false;
     if (wallSharesDoorFramePoint(door, wall, threshold + wall.thickness / 2 + 2)) return false;
     return segmentsOverlapWithThickness(door.hinge!, nextB, wall.a, wall.b, threshold + wall.thickness / 2);
   });
@@ -589,7 +611,7 @@ function startReload(player: PlayerState, tick: number): boolean {
 
 function toggleNearestDoor(room: RoomState, player: PlayerState): boolean {
   const door = room.map.walls
-    .filter((candidate) => candidate.kind === "door" && !candidate.destroyed && candidate.hinge && candidate.closedB)
+    .filter((candidate) => isHingedDoorSegment(candidate) && !candidate.destroyed && candidate.hinge && candidate.closedB)
     .map((candidate) => ({
       door: candidate,
       distance: Math.max(0, distanceToSegment(player.position, candidate.a, candidate.b) - PLAYER_RADIUS - candidate.thickness / 2)
@@ -612,44 +634,92 @@ function toggleNearestDoor(room: RoomState, player: PlayerState): boolean {
   return true;
 }
 
+const gadgetStrategies: Record<GadgetKind, GadgetStrategy> = {
+  camera: {
+    kind: "camera",
+    range: CAMERA_RANGE,
+    canDeploy: basicDeployCheck("camera", CAMERA_RANGE, 7),
+    deploy(room, player, _action, resolved) {
+      const camera: DeployedCamera = { id: `${player.id}-cam-${room.tick}-${room.deployedCameras.length}`, owner: player.id, position: resolved.position, radius: CAMERA_RADIUS, hp: 1 };
+      room.deployedCameras.push(camera);
+      room.slots[player.id].lastSeenCameras.set(camera.id, structuredClone(camera));
+      pushEvent(room, { type: "camera-deployed", tick: room.tick, playerId: player.id, cameraId: camera.id });
+      return { accepted: true };
+    }
+  },
+  molotov: {
+    kind: "molotov",
+    range: MOLOTOV_RANGE,
+    canDeploy: thrownDeployCheck(MOLOTOV_RANGE),
+    deploy(room, player, _action, resolved) {
+      const zone: MolotovZone = { id: `${player.id}-molotov-${room.tick}-${room.molotovs.length}`, owner: player.id, position: resolved.position, radius: MOLOTOV_RADIUS, createdAtTick: room.tick, expiresAtTick: room.tick + MOLOTOV_TICKS };
+      room.molotovs.push(zone);
+      pushEvent(room, { type: "molotov-deployed", tick: room.tick, playerId: player.id, molotovId: zone.id });
+      return { accepted: true };
+    }
+  },
+  smoke: {
+    kind: "smoke",
+    range: SMOKE_RANGE,
+    canDeploy: thrownDeployCheck(SMOKE_RANGE),
+    deploy(room, player, _action, resolved) {
+      const zone: SmokeZone = { id: `${player.id}-smoke-${room.tick}-${room.smokes.length}`, owner: player.id, position: resolved.position, radius: SMOKE_RADIUS, createdAtTick: room.tick, expiresAtTick: room.tick + SMOKE_TICKS };
+      room.smokes.push(zone);
+      pushEvent(room, { type: "smoke-deployed", tick: room.tick, playerId: player.id, smokeId: zone.id });
+      return { accepted: true };
+    }
+  },
+  wall: {
+    kind: "wall",
+    range: DEPLOYABLE_WALL_RANGE,
+    canDeploy: basicDeployCheck("wall", DEPLOYABLE_WALL_RANGE, PLAYER_RADIUS),
+    deploy(room, player, action, resolved) {
+      const wall = createDeployableWall(`${player.id}-wall-${room.tick}-${room.map.walls.length}`, resolved.position, action.angle);
+      room.map.walls.push(wall);
+      room.slots[player.id].lastSeenWalls.set(wall.id, structuredClone(wall));
+      pushEvent(room, { type: "deployable-wall-deployed", tick: room.tick, playerId: player.id, wallId: wall.id });
+      return { accepted: true };
+    }
+  },
+  sound: {
+    kind: "sound",
+    range: SOUND_SENSOR_RANGE,
+    canDeploy: basicDeployCheck("sound", SOUND_SENSOR_RANGE, 7),
+    deploy(room, player, _action, resolved) {
+      const sensor: SoundSensorZone = { id: `${player.id}-sound-${room.tick}-${room.soundSensors.length}`, owner: player.id, position: resolved.position, radius: SOUND_SENSOR_RADIUS, hp: 1, createdAtTick: room.tick };
+      room.soundSensors.push(sensor);
+      pushEvent(room, { type: "sound-sensor-deployed", tick: room.tick, playerId: player.id, sensorId: sensor.id });
+      return { accepted: true };
+    }
+  }
+};
+
 function deployGadget(room: RoomState, player: PlayerState, gadget: GadgetKind, target: Vec2, angle: number): DeployResult {
   if (player.gadgets[gadget] <= 0) return { accepted: false, reason: "no-count" };
-  const maxRange = gadget === "camera" ? CAMERA_RANGE : gadget === "wall" ? DEPLOYABLE_WALL_RANGE : gadget === "smoke" ? SMOKE_RANGE : MOLOTOV_RANGE;
-  const range = gadget === "sound" ? SOUND_SENSOR_RANGE : maxRange;
-  const thrown = gadget === "molotov" || gadget === "smoke" ? resolveThrownTarget(room.map, player.position, target, range) : undefined;
-  const position = thrown?.position ?? clampTarget(room.map, player.position, target, range);
-  if (thrown && !thrown.valid) return { accepted: false, reason: "out-of-range" };
-  if (!hasPlacementLineOfSight(room.map, player.position, position)) return { accepted: false, reason: "blocked-los" };
-  if ((gadget === "camera" || gadget === "sound" || gadget === "wall") && !isPlacementClear(room.map, position, gadget === "wall" ? PLAYER_RADIUS : 7)) return { accepted: false, reason: "invalid" };
+  const strategy = gadgetStrategies[gadget];
+  const action = { target, angle };
+  const canDeploy = strategy.canDeploy(room, player, action);
+  if (!canDeploy.accepted || !canDeploy.position) return canDeploy.accepted ? { accepted: false, reason: "invalid" } : canDeploy;
   player.gadgets[gadget] -= 1;
-  if (gadget === "camera") {
-    const camera: DeployedCamera = { id: `${player.id}-cam-${room.tick}-${room.deployedCameras.length}`, owner: player.id, position, radius: CAMERA_RADIUS, hp: 1 };
-    room.deployedCameras.push(camera);
-    room.slots[player.id].lastSeenCameras.set(camera.id, structuredClone(camera));
-    pushEvent(room, { type: "camera-deployed", tick: room.tick, playerId: player.id, cameraId: camera.id });
-    return { accepted: true };
-  } else if (gadget === "molotov") {
-    const zone: MolotovZone = { id: `${player.id}-molotov-${room.tick}-${room.molotovs.length}`, owner: player.id, position, radius: MOLOTOV_RADIUS, createdAtTick: room.tick, expiresAtTick: room.tick + MOLOTOV_TICKS };
-    room.molotovs.push(zone);
-    pushEvent(room, { type: "molotov-deployed", tick: room.tick, playerId: player.id, molotovId: zone.id });
-    return { accepted: true };
-  } else if (gadget === "smoke") {
-    const zone: SmokeZone = { id: `${player.id}-smoke-${room.tick}-${room.smokes.length}`, owner: player.id, position, radius: SMOKE_RADIUS, createdAtTick: room.tick, expiresAtTick: room.tick + SMOKE_TICKS };
-    room.smokes.push(zone);
-    pushEvent(room, { type: "smoke-deployed", tick: room.tick, playerId: player.id, smokeId: zone.id });
-    return { accepted: true };
-  } else if (gadget === "sound") {
-    const sensor: SoundSensorZone = { id: `${player.id}-sound-${room.tick}-${room.soundSensors.length}`, owner: player.id, position, radius: SOUND_SENSOR_RADIUS, hp: 1, createdAtTick: room.tick };
-    room.soundSensors.push(sensor);
-    pushEvent(room, { type: "sound-sensor-deployed", tick: room.tick, playerId: player.id, sensorId: sensor.id });
-    return { accepted: true };
-  } else {
-    const wall = createDeployableWall(`${player.id}-wall-${room.tick}-${room.map.walls.length}`, position, angle);
-    room.map.walls.push(wall);
-    room.slots[player.id].lastSeenWalls.set(wall.id, structuredClone(wall));
-    pushEvent(room, { type: "deployable-wall-deployed", tick: room.tick, playerId: player.id, wallId: wall.id });
-    return { accepted: true };
-  }
+  return strategy.deploy(room, player, action, { position: canDeploy.position });
+}
+
+function basicDeployCheck(_gadget: GadgetKind, range: number, clearRadius: number): GadgetStrategy["canDeploy"] {
+  return (room, player, action) => {
+    const position = clampTarget(room.map, player.position, action.target, range);
+    if (!hasPlacementLineOfSight(room.map, player.position, position)) return { accepted: false, reason: "blocked-los" };
+    if (!isPlacementClear(room.map, position, clearRadius)) return { accepted: false, reason: "invalid" };
+    return { accepted: true, position };
+  };
+}
+
+function thrownDeployCheck(range: number): GadgetStrategy["canDeploy"] {
+  return (room, player, action) => {
+    const thrown = resolveThrownTarget(room.map, player.position, action.target, range);
+    if (!thrown.valid) return { accepted: false, reason: "out-of-range" };
+    if (!hasPlacementLineOfSight(room.map, player.position, thrown.position)) return { accepted: false, reason: "blocked-los" };
+    return { accepted: true, position: thrown.position };
+  };
 }
 
 function resolveShot(room: RoomState, shooterId: PlayerId): void {
@@ -719,12 +789,11 @@ function resolveHitscan(room: RoomState, shooterId: PlayerId, origin: Vec2, rayE
     const hit = lineIntersection(origin, rayEnd, wall.a, wall.b);
     if (!hit) continue;
     const hitDistance = distance(origin, hit);
-    if (wall.destructible && wall.kind === "mesh") {
+    if (isShootableDestructibleSegment(wall) && !segmentBlocksShooting(wall)) {
       damageWall(room, wall.id, shooterId);
       continue;
     }
-    const blocksShot = wall.kind === "door" || wall.kind === "transparent" || wall.blocksVision || wall.kind === "solid";
-    if (blocksShot && hitDistance < nearest.distance) nearest = { kind: "wall", distance: hitDistance, end: hit, wallId: wall.id };
+    if ((segmentBlocksShooting(wall) || isShootableDestructibleSegment(wall)) && hitDistance < nearest.distance) nearest = { kind: "wall", distance: hitDistance, end: hit, wallId: wall.id };
   }
   return nearest;
 }
@@ -738,7 +807,7 @@ function rayCircleDistance(origin: Vec2, direction: Vec2, center: Vec2, radius: 
 
 function damageWall(room: RoomState, wallId: string, shooterId: PlayerId): void {
   const wall = room.map.walls.find((candidate) => candidate.id === wallId);
-  if (!wall?.destructible || wall.kind === "door" || wall.destroyed) return;
+  if (!wall || !isShootableDestructibleSegment(wall)) return;
   wall.hp = Math.max(0, (wall.hp ?? wall.maxHp ?? 1) - 1);
   if (wall.hp <= 0) {
     wall.destroyed = true;
@@ -874,7 +943,7 @@ function resolveSoundSensors(room: RoomState): void {
 
 function breachNearestWall(room: RoomState, player: PlayerState): boolean {
   const target = room.map.walls
-    .filter((wall) => wall.destructible && wall.kind !== "door" && !wall.destroyed)
+    .filter((wall) => isShootableDestructibleSegment(wall))
     .map((wall) => ({ wall, distance: distanceToSegment(player.position, wall.a, wall.b) }))
     .filter(({ distance: wallDistance }) => wallDistance <= 52)
     .sort((a, b) => a.distance - b.distance)[0]?.wall;

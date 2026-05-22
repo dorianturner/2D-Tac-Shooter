@@ -1,29 +1,30 @@
 import Phaser from "phaser";
 import {
   add,
-  createWall,
+  applySegmentPreset,
+  createSegmentFromPreset,
   deleteWallsById,
   distance,
   distanceToSegment,
   insertDoorGap,
+  normalizeWallKind,
   replaceWallSection,
   slugifyMapName,
   sub,
   validateDoorSwing,
   wallIntersectsRect,
-  wallKindDefaults,
   type MapDefinition,
   type PlayerId,
+  type SegmentPresetId,
   type Spawn,
   type Vec2,
-  type Wall,
-  type WallKind
+  type Wall
 } from "@tac/shared";
 import { listMaps, loadMap, saveMap } from "../editorApi";
 import { mapSummaryToPickable, pickFromList } from "../fuzzyPicker";
 import { colors } from "../render";
 
-type Tool = "select" | "wall" | "transparent" | "mesh" | "door" | "room" | "p1-spawn" | "p2-spawn";
+type Tool = "select" | "wall" | "window" | "mesh" | "breakable-wall" | "door" | "room" | "p1-spawn" | "p2-spawn";
 type DragMode =
   | { type: "none" }
   | { type: "pan"; previous: Vec2 }
@@ -36,8 +37,9 @@ type DragMode =
 const tools: Array<{ id: Tool; label: string }> = [
   { id: "select", label: "Select" },
   { id: "wall", label: "Wall" },
-  { id: "transparent", label: "Transparent" },
+  { id: "window", label: "Window" },
   { id: "mesh", label: "Mesh" },
+  { id: "breakable-wall", label: "Breakable" },
   { id: "door", label: "Door" },
   { id: "room", label: "Room" },
   { id: "p1-spawn", label: "P1 Spawn" },
@@ -131,6 +133,10 @@ export class EditorScene extends Phaser.Scene {
     this.toolbar = this.root.querySelector<HTMLElement>(".tool-grid") ?? undefined;
     this.properties = this.root.querySelector<HTMLElement>(".properties") ?? undefined;
     this.status = this.root.querySelector<HTMLElement>(".save-status") ?? undefined;
+    this.root.querySelectorAll<HTMLElement>(".editor-left, .editor-right").forEach((panel) => {
+      panel.addEventListener("pointerdown", (event) => event.stopPropagation());
+      panel.addEventListener("click", (event) => event.stopPropagation());
+    });
     this.toolbar!.innerHTML = tools.map((tool) => `<button data-tool="${tool.id}">${tool.label}</button>`).join("");
     this.toolbar!.addEventListener("click", (event) => {
       const button = (event.target as HTMLElement).closest<HTMLButtonElement>("[data-tool]");
@@ -162,7 +168,7 @@ export class EditorScene extends Phaser.Scene {
       this.placeSpawn(this.tool === "p1-spawn" ? "p1" : "p2", point);
       return;
     }
-    if (this.tool === "wall" || this.tool === "transparent" || this.tool === "mesh" || this.tool === "room") {
+    if (this.tool === "wall" || this.tool === "window" || this.tool === "mesh" || this.tool === "breakable-wall" || this.tool === "room") {
       this.drag = { type: "create", start: point };
       return;
     }
@@ -240,7 +246,7 @@ export class EditorScene extends Phaser.Scene {
     if (this.drag.type === "create") {
       this.recordUndo();
       if (this.tool === "room") this.createRoomWalls(this.drag.start, point);
-      else this.createSegment(this.drag.start, point, toolToKind(this.tool));
+      else this.createSegment(this.drag.start, point, toolToPreset(this.tool));
     } else if (this.drag.type === "select-box") {
       this.selectWallsInRect(this.drag.start, this.drag.current, pointer.event.shiftKey);
     }
@@ -250,10 +256,10 @@ export class EditorScene extends Phaser.Scene {
     this.redraw();
   }
 
-  private createSegment(a: Vec2, b: Vec2, kind: WallKind): void {
+  private createSegment(a: Vec2, b: Vec2, preset: SegmentPresetId): void {
     if (distance(a, b) < 8) return;
-    const wall = createWall(nextId(kind, this.map.walls), kind, a, b, 12, { label: kindLabel(kind) });
-    this.map.walls = kind === "transparent" || kind === "mesh" ? replaceWallSection(this.map.walls, wall) : [...this.map.walls, wall];
+    const wall = createSegmentFromPreset(nextId(preset, this.map.walls), preset, a, b);
+    this.map.walls = preset === "window" || preset === "mesh" ? replaceWallSection(this.map.walls, wall) : [...this.map.walls, wall];
     this.selectedIds = new Set([wall.id]);
     this.selectedSpawns.clear();
   }
@@ -270,10 +276,10 @@ export class EditorScene extends Phaser.Scene {
       sw: { x: min.x, y: max.y }
     };
     const walls = [
-      createWall(`${roomId}-north`, "solid", corners.nw, corners.ne, 12, { roomId, label: roomId }),
-      createWall(`${roomId}-east`, "solid", corners.ne, corners.se, 12, { roomId, label: roomId }),
-      createWall(`${roomId}-south`, "solid", corners.se, corners.sw, 12, { roomId, label: roomId }),
-      createWall(`${roomId}-west`, "solid", corners.sw, corners.nw, 12, { roomId, label: roomId })
+      createSegmentFromPreset(`${roomId}-north`, "wall", corners.nw, corners.ne, { roomId, label: roomId }),
+      createSegmentFromPreset(`${roomId}-east`, "wall", corners.ne, corners.se, { roomId, label: roomId }),
+      createSegmentFromPreset(`${roomId}-south`, "wall", corners.se, corners.sw, { roomId, label: roomId }),
+      createSegmentFromPreset(`${roomId}-west`, "wall", corners.sw, corners.nw, { roomId, label: roomId })
     ];
     this.map.walls = [...this.map.walls, ...walls];
     this.selectedIds = new Set(walls.map((wall) => wall.id));
@@ -357,19 +363,19 @@ export class EditorScene extends Phaser.Scene {
   }
 
   private drawEditorWall(wall: Wall): void {
-    const kind = normalizedKind(wall);
+    const preset = normalizedPreset(wall);
     const selected = this.selectedIds.has(wall.id);
     
     // Draw destructible walls completely orange
     if (wall.destructible) {
       // Draw the wall normally first
-      const color = kind === "door" ? colors.sensor : colors.wall;
+      const color = preset === "door" ? colors.sensor : preset === "window" ? 0x67d7ff : colors.wall;
       this.overlay!.lineStyle(selected ? wall.thickness + 7 : wall.thickness, selected ? colors.warning : color, selected ? 0.95 : 0.9);
       this.overlay!.lineBetween(wall.a.x, wall.a.y, wall.b.x, wall.b.y);
       // Then draw a thin orange outline on top
       this.overlay!.lineStyle(2, colors.destructible, 0.95);
       this.overlay!.lineBetween(wall.a.x, wall.a.y, wall.b.x, wall.b.y);
-    } else if (kind === "mesh") {
+    } else if (preset === "mesh") {
       // Draw mesh walls as X's
       const dx = wall.b.x - wall.a.x;
       const dy = wall.b.y - wall.a.y;
@@ -384,18 +390,18 @@ export class EditorScene extends Phaser.Scene {
         this.overlay!.lineBetween(wall.a.x - perpX, wall.a.y - perpY, wall.b.x + perpX, wall.b.y + perpY);
         this.overlay!.lineBetween(wall.a.x + perpX, wall.a.y + perpY, wall.b.x - perpX, wall.b.y - perpY);
       }
-    } else if (kind === "transparent") {
+    } else if (preset === "window") {
       // Draw transparent walls as dashed lines
       this.overlay!.lineStyle(selected ? wall.thickness + 7 : wall.thickness, selected ? colors.warning : 0x67d7ff, selected ? 0.95 : 0.5);
       drawDashedLine(this.overlay!, wall.a, wall.b, 18, 8);
     } else {
       // Draw other walls normally
-      const color = kind === "door" ? colors.sensor : colors.wall;
+      const color = preset === "door" ? colors.sensor : colors.wall;
       this.overlay!.lineStyle(selected ? wall.thickness + 7 : wall.thickness, selected ? colors.warning : color, selected ? 0.95 : 0.9);
       this.overlay!.lineBetween(wall.a.x, wall.a.y, wall.b.x, wall.b.y);
       
       // Draw door swing arc
-      if (kind === "door" && wall.hinge && wall.closedB) {
+      if (preset === "door" && wall.hinge && wall.closedB) {
         const hingePos = wall.hinge;
         const length = Math.hypot(wall.closedB.x - hingePos.x, wall.closedB.y - hingePos.y);
         const closedAngle = Math.atan2(wall.closedB.y - hingePos.y, wall.closedB.x - hingePos.x);
@@ -420,11 +426,11 @@ export class EditorScene extends Phaser.Scene {
       }
     }
     
-    this.overlay!.lineStyle(1, kind === "door" ? colors.sensor : kind === "mesh" ? 0xb6f2df : kind === "transparent" ? 0x67d7ff : colors.wall, 0.8);
+    this.overlay!.lineStyle(1, preset === "door" ? colors.sensor : preset === "mesh" ? 0xb6f2df : preset === "window" ? 0x67d7ff : colors.wall, 0.8);
     this.overlay!.strokeCircle(wall.a.x, wall.a.y, selected ? 8 : 5);
     this.overlay!.strokeCircle(wall.b.x, wall.b.y, selected ? 8 : 5);
-    const label = wall.label || kindLabel(kind);
-    if (kind !== "solid" || wall.roomId || wall.destructible || selected) this.label((wall.a.x + wall.b.x) / 2 + 6, (wall.a.y + wall.b.y) / 2 + 6, `${label.toUpperCase()}${wall.destructible ? " / DESTRUCTIBLE" : ""}`);
+    const label = wall.label || presetLabel(preset);
+    if (preset !== "wall" || wall.roomId || wall.destructible || selected) this.label((wall.a.x + wall.b.x) / 2 + 6, (wall.a.y + wall.b.y) / 2 + 6, `${label.toUpperCase()}${wall.destructible ? " / DESTRUCTIBLE" : ""}`);
   }
 
   private drawSpawns(): void {
@@ -441,7 +447,7 @@ export class EditorScene extends Phaser.Scene {
 
   private drawCreationPreview(): void {
     if (this.drag.type !== "create") return;
-    const kind = toolToKind(this.tool);
+    const preset = toolToPreset(this.tool);
     this.overlay!.lineStyle(2, colors.sensor, 0.9);
     if (this.tool === "room") {
       const min = { x: Math.min(this.drag.start.x, this.pointerWorld.x), y: Math.min(this.drag.start.y, this.pointerWorld.y) };
@@ -450,7 +456,7 @@ export class EditorScene extends Phaser.Scene {
       this.overlay!.strokeRect(min.x, min.y, width, height);
     } else {
       this.overlay!.lineBetween(this.drag.start.x, this.drag.start.y, this.pointerWorld.x, this.pointerWorld.y);
-      this.label(this.pointerWorld.x + 8, this.pointerWorld.y + 8, kindLabel(kind));
+      this.label(this.pointerWorld.x + 8, this.pointerWorld.y + 8, presetLabel(preset));
     }
   }
 
@@ -494,7 +500,7 @@ export class EditorScene extends Phaser.Scene {
       <label class="check-row">snap to grid <input type="checkbox" data-map-field="snap" ${this.snap ? "checked" : ""}></label>
     `;
     container.querySelectorAll<HTMLInputElement>("[data-map-field]").forEach((input) => {
-      input.addEventListener("input", () => this.applyMapField(input));
+      onEditorControlCommit(input, () => this.applyMapField(input));
     });
   }
 
@@ -511,7 +517,7 @@ export class EditorScene extends Phaser.Scene {
         ${numberField("angle", selectedSpawn.angle)}
       `;
       this.properties.querySelectorAll<HTMLInputElement | HTMLSelectElement>("[data-field]").forEach((input) => {
-        input.addEventListener("input", () => {
+        onEditorControlCommit(input, () => {
           this.recordUndo();
           const value = input instanceof HTMLInputElement && input.type === "checkbox" ? input.checked : input.value;
           applySpawnField(selectedSpawn, input.dataset.field!, value);
@@ -527,14 +533,15 @@ export class EditorScene extends Phaser.Scene {
     if (selected.length > 1) {
       this.properties.innerHTML = `
         <p>${selected.length} objects selected.</p>
-        ${selectField("kind", "solid", ["solid", "transparent", "mesh", "door"])}
+        ${selectField("preset", "wall", ["wall", "window", "mesh", "breakable-wall", "door", "deployable-wall"])}
         ${numberField("thickness", selected[0]?.thickness ?? 12)}
         ${checkField("destructible", selected.every((wall) => wall.destructible))}
         ${checkField("blocksVision", selected.every((wall) => wall.blocksVision))}
         ${checkField("blocksMovement", selected.every((wall) => wall.blocksMovement))}
+        ${checkField("blocksShooting", selected.every((wall) => wall.blocksShooting))}
       `;
       this.properties.querySelectorAll<HTMLInputElement | HTMLSelectElement>("[data-field]").forEach((input) => {
-        input.addEventListener("input", () => {
+        onEditorControlCommit(input, () => {
           const value = input instanceof HTMLInputElement && input.type === "checkbox" ? input.checked : input.value;
           this.recordUndo();
           for (const wall of selected) applyWallField(wall, input.dataset.field!, value);
@@ -547,7 +554,7 @@ export class EditorScene extends Phaser.Scene {
     this.properties.innerHTML = `
       <label>id <input data-field="id" value="${escapeAttr(wall.id)}"></label>
       <label>label <input data-field="label" value="${escapeAttr(wall.label ?? "")}"></label>
-      ${selectField("kind", normalizedKind(wall), ["solid", "transparent", "mesh", "door"])}
+      ${selectField("preset", normalizedPreset(wall), ["wall", "window", "mesh", "breakable-wall", "door", "deployable-wall"])}
       ${numberField("a.x", wall.a.x)}
       ${numberField("a.y", wall.a.y)}
       ${numberField("b.x", wall.b.x)}
@@ -556,9 +563,10 @@ export class EditorScene extends Phaser.Scene {
       ${checkField("destructible", wall.destructible)}
       ${checkField("blocksVision", wall.blocksVision)}
       ${checkField("blocksMovement", wall.blocksMovement)}
+      ${checkField("blocksShooting", wall.blocksShooting)}
     `;
     this.properties.querySelectorAll<HTMLInputElement | HTMLSelectElement>("[data-field]").forEach((input) => {
-      input.addEventListener("input", () => {
+      onEditorControlCommit(input, () => {
         const oldId = wall.id;
         const value = input instanceof HTMLInputElement && input.type === "checkbox" ? input.checked : input.value;
         this.recordUndo();
@@ -612,7 +620,7 @@ export class EditorScene extends Phaser.Scene {
   private pickWall(point: Vec2, includeDoor = false): Wall | undefined {
     return [...this.map.walls]
       .reverse()
-      .find((wall) => (includeDoor || normalizedKind(wall) !== "door") && distanceToSegment(point, wall.a, wall.b) <= Math.max(12, wall.thickness + 6));
+      .find((wall) => (includeDoor || normalizedPreset(wall) !== "door") && distanceToSegment(point, wall.a, wall.b) <= Math.max(12, wall.thickness + 6));
   }
 
   private pickEndpoint(point: Vec2): { wallId: string; endpoint: "a" | "b" } | undefined {
@@ -686,7 +694,7 @@ export class EditorScene extends Phaser.Scene {
     this.selectedSpawns.clear();
     for (const copied of this.clipboard.walls) {
       const wall = structuredClone(copied);
-      wall.id = nextId(wall.kind ?? "wall", this.map.walls);
+      wall.id = nextId(wall.preset ?? "wall", this.map.walls);
       wall.a = add(wall.a, { x: offset, y: offset });
       wall.b = add(wall.b, { x: offset, y: offset });
       if (wall.roomId) wall.roomId = `${wall.roomId}-copy`;
@@ -744,11 +752,7 @@ function normalizeMap(map: MapDefinition): MapDefinition {
     utilityPlacements: map.utilityPlacements ?? [],
     lighting: map.lighting ?? [],
     notes: map.notes ?? "",
-    walls: map.walls.map((wall) => {
-      const kind = wall.kind ?? (wall.blocksVision ? "solid" : "transparent");
-      const defaults = wallKindDefaults(kind);
-      return { ...wall, ...defaults, kind, destructible: wall.destructible };
-    })
+    walls: map.walls.map(normalizeWallKind)
   };
 }
 
@@ -780,21 +784,24 @@ function createBlankMap(): MapDefinition {
   });
 }
 
-function toolToKind(tool: Tool): WallKind {
-  if (tool === "transparent") return "transparent";
+function toolToPreset(tool: Tool): SegmentPresetId {
+  if (tool === "window") return "window";
   if (tool === "mesh") return "mesh";
+  if (tool === "breakable-wall") return "breakable-wall";
   if (tool === "door") return "door";
-  return "solid";
+  return "wall";
 }
 
-function normalizedKind(wall: Wall): WallKind {
-  return wall.kind ?? (wall.blocksVision ? "solid" : "transparent");
+function normalizedPreset(wall: Wall): SegmentPresetId {
+  return normalizeWallKind(wall).preset ?? "wall";
 }
 
-function kindLabel(kind: WallKind): string {
-  if (kind === "transparent") return "transparent";
-  if (kind === "mesh") return "mesh";
-  if (kind === "door") return "door";
+function presetLabel(preset: SegmentPresetId): string {
+  if (preset === "window") return "window";
+  if (preset === "mesh") return "mesh";
+  if (preset === "door") return "door";
+  if (preset === "breakable-wall") return "breakable wall";
+  if (preset === "deployable-wall") return "deployable";
   return "wall";
 }
 
@@ -813,18 +820,37 @@ function numberField(field: string, value: number): string {
 }
 
 function checkField(field: string, value: boolean): string {
-  return `<label class="check-row">${field} <input type="checkbox" data-field="${field}" ${value ? "checked" : ""}></label>`;
+  return `<button type="button" class="check-row checkbox-button" data-checkbox-field="${field}" aria-pressed="${value ? "true" : "false"}"><span>${field}</span><input type="checkbox" data-field="${field}" ${value ? "checked" : ""} tabindex="-1"></button>`;
 }
 
 function selectField(field: string, value: string, options: string[]): string {
   return `<label>${field} <select data-field="${field}">${options.map((option) => `<option value="${option}" ${option === value ? "selected" : ""}>${option}</option>`).join("")}</select></label>`;
 }
 
+function onEditorControlCommit(input: HTMLInputElement | HTMLSelectElement, handler: () => void): void {
+  if (input instanceof HTMLInputElement && input.type === "checkbox") {
+    const button = input.closest<HTMLButtonElement>("[data-checkbox-field]");
+    if (button) {
+      button.addEventListener("click", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        input.checked = !input.checked;
+        button.setAttribute("aria-pressed", input.checked ? "true" : "false");
+        handler();
+      });
+      return;
+    }
+    input.addEventListener("change", handler);
+    return;
+  }
+  input.addEventListener("input", handler);
+}
+
 function applyWallField(wall: Wall, field: string, raw: string | boolean): void {
   const value = typeof raw === "boolean" ? raw : Number.isFinite(Number(raw)) && raw.trim() !== "" ? Number(raw) : raw;
-  if (field === "kind") {
-    Object.assign(wall, wallKindDefaults(value as WallKind));
-    wall.label = kindLabel(value as WallKind);
+  if (field === "preset") {
+    Object.assign(wall, applySegmentPreset(wall, value as SegmentPresetId));
+    wall.label = presetLabel(value as SegmentPresetId);
     return;
   }
   const parts = field.split(".");

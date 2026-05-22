@@ -96,7 +96,8 @@ canvas {
 .secondary-action,
 .back-link,
 .editor-actions button,
-.tool-grid button {
+.tool-grid button,
+.checkbox-button {
   border: 1px solid rgba(118, 219, 255, 0.42);
   background: rgba(9, 28, 39, 0.9);
   color: #d7f3ff;
@@ -438,8 +439,24 @@ canvas {
 }
 
 .check-row {
+  display: grid;
   grid-template-columns: 1fr auto;
   align-items: center;
+  width: 100%;
+  margin-bottom: 10px;
+  text-align: left;
+}
+
+.checkbox-button {
+  padding: 8px;
+}
+
+.check-row input[type="checkbox"] {
+  width: 18px;
+  height: 18px;
+  margin: 0;
+  accent-color: #ffcc66;
+  pointer-events: none;
 }
 
 @media (max-width: 820px) {

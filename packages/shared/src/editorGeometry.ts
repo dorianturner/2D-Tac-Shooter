@@ -1,40 +1,130 @@
 import { add, distance, distanceToSegment, lineIntersection, mul, normalize, sub } from "./geometry.js";
-import type { MapDefinition, Vec2, Wall, WallKind } from "./types.js";
+import type { MapDefinition, SegmentPresetId, Vec2, Wall, WallKind } from "./types.js";
 
-export function wallKindDefaults(kind: WallKind): Pick<Wall, "kind" | "blocksVision" | "blocksMovement" | "destructible"> {
-  if (kind === "transparent") return { kind, blocksVision: false, blocksMovement: true, destructible: false };
-  if (kind === "mesh") return { kind, blocksVision: false, blocksMovement: true, destructible: false };
-  if (kind === "door") return { kind, blocksVision: false, blocksMovement: false, destructible: false };
-  return { kind, blocksVision: true, blocksMovement: true, destructible: false };
+type SegmentPresetDefaults = {
+  preset: SegmentPresetId;
+  kind: WallKind;
+  label: string;
+  thickness: number;
+  blocksVision: boolean;
+  blocksMovement: boolean;
+  blocksShooting: boolean;
+  destructible: boolean;
+};
+
+export const segmentPresetDefaults: Record<SegmentPresetId, SegmentPresetDefaults> = {
+  wall: { preset: "wall", kind: "solid", label: "wall", thickness: 12, blocksVision: true, blocksMovement: true, blocksShooting: true, destructible: false },
+  window: { preset: "window", kind: "transparent", label: "window", thickness: 12, blocksVision: false, blocksMovement: true, blocksShooting: true, destructible: false },
+  mesh: { preset: "mesh", kind: "mesh", label: "mesh", thickness: 5, blocksVision: false, blocksMovement: true, blocksShooting: false, destructible: false },
+  "breakable-wall": { preset: "breakable-wall", kind: "solid", label: "breakable wall", thickness: 12, blocksVision: true, blocksMovement: true, blocksShooting: true, destructible: true },
+  door: { preset: "door", kind: "door", label: "door", thickness: 6, blocksVision: false, blocksMovement: false, blocksShooting: true, destructible: false },
+  "deployable-wall": { preset: "deployable-wall", kind: "solid", label: "deployable", thickness: 10, blocksVision: true, blocksMovement: true, blocksShooting: true, destructible: true }
+};
+
+export function presetFromLegacyKind(kind?: string, destructible = false): SegmentPresetId {
+  if (kind === "destructible") return "breakable-wall";
+  if (kind === "door") return "door";
+  if (kind === "mesh") return "mesh";
+  if (kind === "transparent") return "window";
+  if (destructible) return "breakable-wall";
+  return "wall";
+}
+
+export function segmentPreset(wall: Wall): SegmentPresetId {
+  return wall.preset ?? presetFromLegacyKind((wall as unknown as { kind?: string }).kind, wall.destructible);
+}
+
+export function wallKindDefaults(kind: WallKind): Pick<Wall, "preset" | "kind" | "blocksVision" | "blocksMovement" | "blocksShooting" | "destructible"> {
+  const preset = presetFromLegacyKind(kind);
+  const defaults = segmentPresetDefaults[preset];
+  return {
+    preset: defaults.preset,
+    kind,
+    blocksVision: defaults.blocksVision,
+    blocksMovement: defaults.blocksMovement,
+    blocksShooting: defaults.blocksShooting,
+    destructible: defaults.destructible
+  };
 }
 
 export function createWall(id: string, kind: WallKind, a: Vec2, b: Vec2, thickness = 12, extra: Partial<Wall> = {}): Wall {
+  const preset = extra.preset ?? presetFromLegacyKind(kind, extra.destructible);
+  return createSegmentFromPreset(id, preset, a, b, { kind, thickness, ...extra });
+}
+
+export function createSegmentFromPreset(id: string, preset: SegmentPresetId, a: Vec2, b: Vec2, extra: Partial<Wall> = {}): Wall {
+  const defaults = segmentPresetDefaults[preset];
   return {
     id,
-    ...wallKindDefaults(kind),
+    ...defaults,
     a,
     b,
-    thickness,
+    thickness: extra.thickness ?? defaults.thickness,
     ...extra
   };
 }
 
-export function normalizeWallKind(wall: Wall): Wall {
+export function applySegmentPreset(wall: Wall, preset: SegmentPresetId): Wall {
+  const defaults = segmentPresetDefaults[preset];
+  return {
+    ...wall,
+    ...defaults,
+    preset,
+    thickness: wall.thickness
+  };
+}
+
+export function normalizeSegment(wall: Wall): Wall {
   const legacyKind = (wall as unknown as { kind?: string }).kind;
+  const preset = wall.preset ?? presetFromLegacyKind(legacyKind, wall.destructible);
+  const defaults = segmentPresetDefaults[preset];
   if (legacyKind === "destructible") {
-    const normalized: Wall = { ...wall, kind: "solid", destructible: true };
+    const normalized: Wall = { ...wall, ...defaults, preset: "breakable-wall", kind: "solid", destructible: true, blocksShooting: wall.blocksShooting ?? defaults.blocksShooting };
     if (wall.label === "destructible") normalized.label = "wall";
     return normalized;
   }
-  const kind = legacyKind === "transparent" || legacyKind === "door" || legacyKind === "mesh" || legacyKind === "solid" ? legacyKind : wall.blocksVision ? "solid" : "transparent";
-  return { ...wall, kind };
+  const kind = legacyKind === "transparent" || legacyKind === "door" || legacyKind === "mesh" || legacyKind === "solid" ? legacyKind : defaults.kind;
+  return {
+    ...wall,
+    preset,
+    kind,
+    label: wall.label ?? defaults.label,
+    blocksVision: wall.blocksVision ?? defaults.blocksVision,
+    blocksMovement: wall.blocksMovement ?? defaults.blocksMovement,
+    blocksShooting: wall.blocksShooting ?? defaults.blocksShooting,
+    destructible: wall.destructible ?? defaults.destructible
+  };
+}
+
+export function normalizeWallKind(wall: Wall): Wall {
+  return normalizeSegment(wall);
 }
 
 export function normalizeMapDefinition(map: MapDefinition): MapDefinition {
   return {
     ...map,
-    walls: map.walls.map(normalizeWallKind)
+    walls: map.walls.map(normalizeSegment)
   };
+}
+
+export function isHingedDoorSegment(wall: Wall): boolean {
+  return segmentPreset(wall) === "door" || Boolean(wall.hinge && wall.closedB);
+}
+
+export function segmentBlocksMovement(wall: Wall): boolean {
+  return !wall.destroyed && wall.blocksMovement;
+}
+
+export function segmentBlocksVision(wall: Wall): boolean {
+  return !wall.destroyed && wall.blocksVision;
+}
+
+export function segmentBlocksShooting(wall: Wall): boolean {
+  return !wall.destroyed && wall.blocksShooting;
+}
+
+export function isShootableDestructibleSegment(wall: Wall): boolean {
+  return !wall.destroyed && wall.destructible && !isHingedDoorSegment(wall);
 }
 
 export function deleteWallsById(walls: Wall[], ids: Set<string>): Wall[] {
@@ -51,7 +141,7 @@ export function nearestPointOnWall(wall: Wall, point: Vec2): Vec2 {
 
 export function insertDoorGap(walls: Wall[], wallId: string, point: Vec2, width: number, idPrefix: string): Wall[] {
   const wall = walls.find((candidate) => candidate.id === wallId);
-  if (!wall || wall.kind === "door") return walls;
+  if (!wall || isHingedDoorSegment(wall)) return walls;
   const hit = nearestPointOnWall(wall, point);
   const direction = normalize(sub(wall.b, wall.a));
   const half = width / 2;
@@ -63,7 +153,7 @@ export function insertDoorGap(walls: Wall[], wallId: string, point: Vec2, width:
   const next: Wall[] = walls.filter((candidate) => candidate.id !== wallId);
   if (leftLength > minimumSegment) next.push({ ...wall, id: `${idPrefix}-left`, b: gapA });
   if (rightLength > minimumSegment) next.push({ ...wall, id: `${idPrefix}-right`, a: gapB });
-  next.push(createWall(`${idPrefix}-door`, "door", gapA, gapB, Math.max(4, wall.thickness / 2), { label: "DOOR" }));
+  next.push(createSegmentFromPreset(`${idPrefix}-door`, "door", gapA, gapB, { thickness: Math.max(4, wall.thickness / 2), label: "DOOR" }));
   return next;
 }
 
@@ -73,14 +163,14 @@ export interface DoorSwingValidation {
 }
 
 export function validateDoorSwing(walls: Wall[], door: Wall, maxAngle = 1.92): DoorSwingValidation {
-  if (door.kind !== "door") return { valid: true };
+  if (!isHingedDoorSegment(door)) return { valid: true };
   const hinge = door.hinge ?? door.closedA ?? door.a;
   const closedB = door.closedB ?? door.b;
   const doorHalf = door.thickness / 2;
   const angles = [-maxAngle, -1.4, -1, -0.6, -0.25, 0.25, 0.6, 1, 1.4, maxAngle];
 
   for (const wall of walls) {
-    if (wall.id === door.id || wall.destroyed || !wall.blocksMovement) continue;
+    if (wall.id === door.id || !segmentBlocksMovement(wall)) continue;
     if (wallSharesDoorFramePoint(hinge, closedB, doorHalf, wall)) continue;
     for (const angle of angles) {
       const swungB = rotateDoorEndpoint(hinge, closedB, angle);
@@ -117,7 +207,7 @@ export function replaceWallSection(walls: Wall[], replacement: Wall): Wall[] {
   let replaced = false;
 
   for (const wall of walls) {
-    if (wall.kind === "door" || !isReplaceableOverlap(wall, replacement, axis, min, max)) {
+    if (isHingedDoorSegment(wall) || !isReplaceableOverlap(wall, replacement, axis, min, max)) {
       result.push(wall);
       continue;
     }
@@ -141,8 +231,8 @@ export function replaceWallSection(walls: Wall[], replacement: Wall): Wall[] {
 }
 
 function isReplaceableOverlap(wall: Wall, replacement: Wall, axis: "x" | "y", min: number, max: number): boolean {
-  if (wall.kind && wall.kind !== "solid") return false;
-  if (!wall.blocksMovement || !wall.blocksVision || wall.destructible) return false;
+  if (segmentPreset(wall) !== "wall") return false;
+  if (!wall.blocksMovement || !wall.blocksVision || !wall.blocksShooting || wall.destructible) return false;
   if (dominantAxis(wall) !== axis) return false;
   const crossAxis: "x" | "y" = axis === "x" ? "y" : "x";
   const crossDelta = Math.max(
