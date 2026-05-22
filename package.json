@@ -12,7 +12,6 @@
     "dev": "concurrently -n server,client -c cyan,magenta \"npm run dev:server\" \"npm run dev:client\"",
     "dev:server": "npm --workspace @tac/server run dev",
     "dev:client": "npm --workspace @tac/client run dev",
-    "start:server": "npm --workspace @tac/server run start",
     "build": "npm run build --workspaces",
     "typecheck": "npm run typecheck --workspaces",
     "test": "npm run test --workspaces --if-present"
