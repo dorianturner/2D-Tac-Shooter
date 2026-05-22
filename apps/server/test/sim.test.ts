@@ -103,6 +103,25 @@ describe("authoritative simulation", () => {
     expect(room.round.reason).toBe("timer");
   });
 
+  it("selects an authored overtime objective from multiple map points", () => {
+    const picks = new Set<string>();
+    for (let roundNumber = 1; roundNumber <= 8; roundNumber += 1) {
+      const map = testMap();
+      map.objectives = [
+        { id: "alpha", position: { x: 120, y: 120 }, radius: 28 },
+        { id: "bravo", position: { x: 180, y: 120 }, radius: 28 }
+      ];
+      delete map.objective;
+      const room = activeRoom(map);
+      room.round.roundNumber = roundNumber;
+      room.tick = room.round.endsAtTick - 1;
+      stepRoom(room);
+      expect(["alpha", "bravo"]).toContain(room.round.objective?.id);
+      picks.add(room.round.objective!.id!);
+    }
+    expect(picks.size).toBeGreaterThan(1);
+  });
+
   it("initializes and moves hinged doors when pushed", () => {
     const map = testMap();
     map.walls.push(createWall("door-1", "door", { x: 120, y: 90 }, { x: 120, y: 150 }, 8));

@@ -9,6 +9,7 @@ import {
   isShootableDestructibleSegment,
   hasLineOfSight,
   lineIntersection,
+  mapObjectives,
   mul,
   normalize,
   pointInCone,
@@ -938,7 +939,7 @@ function damageSoundSensor(room: RoomState, sensorId: string, _shooterId: Player
 }
 
 function enterOvertimeOrDraw(room: RoomState): void {
-  const objective = room.map.objective;
+  const objective = chooseOvertimeObjective(room);
   if (!objective) {
     finishRound(room, "draw", "timer");
     return;
@@ -946,11 +947,20 @@ function enterOvertimeOrDraw(room: RoomState): void {
   room.round.phase = "overtime";
   room.round.overtimeEndsAtTick = room.tick + OVERTIME_TICKS;
   room.round.objective = {
+    id: objective.id,
     position: { ...objective.position },
     radius: objective.radius,
     progressTicks: 0,
     requiredTicks: OBJECTIVE_CAPTURE_TICKS
   };
+}
+
+function chooseOvertimeObjective(room: RoomState): ReturnType<typeof mapObjectives>[number] | undefined {
+  const objectives = mapObjectives(room.map);
+  if (objectives.length === 0) return undefined;
+  const seed = room.replay.seed + room.round.roundNumber * 997 + room.tick * 31;
+  const index = Math.abs(Math.floor(Math.sin(seed) * 10000)) % objectives.length;
+  return objectives[index];
 }
 
 function resolveObjectiveCapture(room: RoomState): void {

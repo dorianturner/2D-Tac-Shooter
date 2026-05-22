@@ -11,7 +11,19 @@ describe("shared tactical primitives", () => {
 
   it("accepts editor wall metadata while keeping older maps valid", () => {
     expect(parseMap({ ...sampleMap, gridSize: 32, walls: [{ ...sampleMap.walls[0]!, kind: "mesh", label: "mesh" }] }).walls[0]?.preset).toBe("mesh");
-    expect(parseMap({ ...sampleMap, objective: { id: "objective", position: { x: 320, y: 240 }, radius: 60 } }).objective?.radius).toBe(60);
+    const singleObjectiveMap = { ...sampleMap, objective: { id: "objective", position: { x: 320, y: 240 }, radius: 60 } } as Record<string, unknown>;
+    delete singleObjectiveMap.objectives;
+    expect(parseMap(singleObjectiveMap).objective?.radius).toBe(60);
+    const multiObjective = parseMap({
+      ...sampleMap,
+      objective: undefined,
+      objectives: [
+        { id: "alpha", position: { x: 320, y: 240 }, radius: 48 },
+        { id: "bravo", position: { x: 640, y: 240 }, radius: 52 }
+      ]
+    });
+    expect(multiObjective.objectives?.map((objective) => objective.id)).toEqual(["alpha", "bravo"]);
+    expect(multiObjective.objective?.id).toBe("alpha");
     const { gridSize: _gridSize, ...legacyMap } = sampleMap;
     expect(parseMap({ ...legacyMap, walls: legacyMap.walls.map(({ kind: _kind, ...wall }) => wall) }).id).toBe("prototype-one");
   });

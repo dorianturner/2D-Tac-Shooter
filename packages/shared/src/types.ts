@@ -108,6 +108,8 @@ export interface MapDefinition {
   sensors: SensorDefinition[];
   utilityPlacements?: UtilityPlacement[];
   lighting?: LightNode[];
+  objectives?: ObjectiveDefinition[];
+  /** @deprecated use objectives for authored maps. */
   objective?: ObjectiveDefinition;
   notes?: string;
 }
@@ -241,6 +243,7 @@ export interface RoundState {
   overtimeEndsAtTick?: number;
   nextRoundStartsAtTick?: number;
   objective?: {
+    id?: string;
     position: Vec2;
     radius: number;
     owner?: PlayerId;

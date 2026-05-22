@@ -93,6 +93,7 @@ export const mapSchema = z.object({
   ),
   utilityPlacements: z.array(utilityPlacementSchema).optional(),
   lighting: z.array(lightNodeSchema).optional(),
+  objectives: z.array(objectiveSchema).optional(),
   objective: objectiveSchema.optional(),
   notes: z.string().optional()
 });

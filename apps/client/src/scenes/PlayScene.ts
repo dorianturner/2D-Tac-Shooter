@@ -10,6 +10,7 @@ const DEPLOYABLE_WALL_LENGTH = 36;
 const DEPLOYABLE_WALL_THICKNESS = 10;
 const ROOM_REFRESH_MS = 2000;
 const SERVER_TICK_MS = 1000 / TICK_RATE;
+const PLAY_CAMERA_ZOOM = 1.35;
 
 interface GadgetPreviewTarget {
   position: Vec2;
@@ -53,6 +54,7 @@ export class PlayScene extends Phaser.Scene {
 
   create(): void {
     this.cameras.main.setBackgroundColor(colors.bg);
+    this.cameras.main.setZoom(PLAY_CAMERA_ZOOM);
     this.mapLayer = this.add.graphics();
     this.entityLayer = this.add.graphics();
     this.keys = this.input.keyboard?.addKeys("W,A,S,D,E,R,ESC,SHIFT,ONE,TWO,THREE,FOUR,FIVE") as Record<string, Phaser.Input.Keyboard.Key>;

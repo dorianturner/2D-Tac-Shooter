@@ -101,11 +101,25 @@ export function normalizeWallKind(wall: Wall): Wall {
 }
 
 export function normalizeMapDefinition(map: MapDefinition): MapDefinition {
+  const objectives = normalizeObjectives(map);
   return {
     ...map,
-    ...(map.objective ? { objective: { id: map.objective.id || "objective", position: { ...map.objective.position }, radius: map.objective.radius || 56 } } : {}),
+    ...(objectives.length > 0 ? { objectives, objective: objectives[0]! } : {}),
     walls: map.walls.map(normalizeSegment)
   };
+}
+
+export function mapObjectives(map: MapDefinition): NonNullable<MapDefinition["objectives"]> {
+  return normalizeObjectives(map);
+}
+
+function normalizeObjectives(map: MapDefinition): NonNullable<MapDefinition["objectives"]> {
+  const source = map.objectives && map.objectives.length > 0 ? map.objectives : map.objective ? [map.objective] : [];
+  return source.map((objective, index) => ({
+    id: objective.id || `objective-${index + 1}`,
+    position: { ...objective.position },
+    radius: objective.radius || 56
+  }));
 }
 
 export function isHingedDoorSegment(wall: Wall): boolean {

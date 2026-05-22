@@ -1,5 +1,5 @@
 import Phaser from "phaser";
-import { segmentPreset, type DeployedCamera, type Detection, type MapDefinition, type MolotovZone, type ServerSnapshot, type SmokeZone, type SoundSensorZone, type Vec2, type Wall } from "@tac/shared";
+import { mapObjectives, segmentPreset, type DeployedCamera, type Detection, type MapDefinition, type MolotovZone, type ServerSnapshot, type SmokeZone, type SoundSensorZone, type Vec2, type Wall } from "@tac/shared";
 
 export const colors = {
   bg: 0x05070a,
@@ -24,7 +24,7 @@ export function drawMap(g: Phaser.GameObjects.Graphics, map: MapDefinition): voi
   for (let x = 0; x <= map.bounds.width; x += gridSize) g.lineBetween(x, 0, x, map.bounds.height);
   for (let y = 0; y <= map.bounds.height; y += gridSize) g.lineBetween(0, y, map.bounds.width, y);
   for (const wall of map.walls) drawWall(g, wall);
-  if (map.objective) drawObjective(g, map.objective.position, map.objective.radius, 0);
+  for (const objective of mapObjectives(map)) drawObjective(g, objective.position, objective.radius, 0);
 }
 
 export function drawObjective(g: Phaser.GameObjects.Graphics, position: Vec2, radius: number, progress = 0): void {
