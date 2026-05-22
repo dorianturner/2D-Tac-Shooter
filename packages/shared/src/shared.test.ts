@@ -65,6 +65,7 @@ describe("shared tactical primitives", () => {
     expect(parsed.walls.every((wall) => wall.destructible)).toBe(true);
     expect(parsed.walls.map((wall) => wall.preset)).toEqual(["breakable-wall", "window", "mesh", "door"]);
     expect(parsed.walls.map((wall) => wall.blocksShooting)).toEqual([true, true, false, true]);
+    expect(parseMap({ ...sampleMap, walls: [createWall("custom-hp", "solid", { x: 0, y: 0 }, { x: 10, y: 0 }, 10, { destructible: true, maxHp: 3 })] }).walls[0]?.maxHp).toBe(3);
   });
 
   it("blocks and opens line of sight after destruction", () => {

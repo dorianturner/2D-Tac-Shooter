@@ -968,6 +968,18 @@ describe("authoritative simulation", () => {
     expect(room.map.walls.find((wall) => wall.id === "door-target")?.destroyed).not.toBe(true);
   });
 
+  it("uses authored destructible health for segment damage", () => {
+    const map = testMap();
+    map.spawns[1]!.position = { x: 260, y: 180 };
+    map.walls.push(createWall("custom-panel", "solid", { x: 110, y: 80 }, { x: 110, y: 160 }, 8, { destructible: true, maxHp: 4 }));
+    const room = activeRoom(map);
+    applyClientMessage(room, "p1", { type: "command", seq: 1, tick: room.tick, move: { x: 0, y: 0 }, aim: 0, fire: true, use: "none" });
+    for (let i = 0; i < 13; i += 1) stepRoom(room);
+    expect(room.map.walls.find((wall) => wall.id === "custom-panel")?.destroyed).not.toBe(true);
+    for (let i = 0; i < 7; i += 1) stepRoom(room);
+    expect(room.map.walls.find((wall) => wall.id === "custom-panel")?.destroyed).toBe(true);
+  });
+
   it("requires both players to request a rematch before resetting scores", () => {
     const room = activeRoom(testMap());
     shootUntilRoundEnds(room);

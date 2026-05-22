@@ -663,6 +663,7 @@ export class EditorScene extends Phaser.Scene {
         ${selectField("preset", "wall", ["wall", "window", "mesh", "breakable-wall", "door", "deployable-wall"])}
         ${numberField("thickness", selected[0]?.thickness ?? 12)}
         ${checkField("destructible", selected.every((wall) => wall.destructible))}
+        ${selected.some((wall) => wall.destructible) ? numberField("maxHp", selected[0]?.maxHp ?? defaultDestructibleHp(selected[0])) : ""}
         ${checkField("blocksVision", selected.every((wall) => wall.blocksVision))}
         ${checkField("blocksMovement", selected.every((wall) => wall.blocksMovement))}
         ${checkField("blocksShooting", selected.every((wall) => wall.blocksShooting))}
@@ -688,6 +689,7 @@ export class EditorScene extends Phaser.Scene {
       ${numberField("b.y", wall.b.y)}
       ${numberField("thickness", wall.thickness)}
       ${checkField("destructible", wall.destructible)}
+      ${wall.destructible ? numberField("maxHp", wall.maxHp ?? defaultDestructibleHp(wall)) : ""}
       ${checkField("blocksVision", wall.blocksVision)}
       ${checkField("blocksMovement", wall.blocksMovement)}
       ${checkField("blocksShooting", wall.blocksShooting)}
@@ -1121,6 +1123,23 @@ function applyWallField(wall: Wall, field: string, raw: string | boolean): void 
     wall.label = presetLabel(value as SegmentPresetId);
     return;
   }
+  if (field === "destructible") {
+    wall.destructible = Boolean(value);
+    if (wall.destructible) {
+      wall.maxHp = wall.maxHp ?? defaultDestructibleHp(wall);
+      wall.hp = wall.maxHp;
+    } else {
+      delete wall.maxHp;
+      delete wall.hp;
+    }
+    return;
+  }
+  if (field === "maxHp") {
+    wall.maxHp = Math.max(1, Math.floor(Number(value) || defaultDestructibleHp(wall)));
+    wall.hp = wall.maxHp;
+    wall.destructible = true;
+    return;
+  }
   const parts = field.split(".");
   if (parts.length === 1) {
     (wall as unknown as Record<string, string | number | boolean>)[field] = value as string | number | boolean;
@@ -1130,6 +1149,14 @@ function applyWallField(wall: Wall, field: string, raw: string | boolean): void 
   if (!parent || !child) return;
   const nested = (wall as unknown as Record<string, Record<string, number>>)[parent];
   if (nested) nested[child] = Number(value);
+}
+
+function defaultDestructibleHp(wall: Wall | undefined): number {
+  if (!wall) return 5;
+  const preset = normalizedPreset(wall);
+  if (preset === "window" || preset === "mesh") return 1;
+  if (preset === "deployable-wall") return 8;
+  return 5;
 }
 
 function applySpawnField(spawn: Spawn, field: string, raw: string | boolean): void {
