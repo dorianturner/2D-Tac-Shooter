@@ -395,21 +395,52 @@ canvas {
   pointer-events: auto;
 }
 
-.play-shell.in-game.hud-expanded .play-panel {
+.play-shell.in-game.menu-open .play-panel {
+  left: 50%;
+  bottom: auto;
+  top: 50%;
+  transform: translate(-50%, -50%);
   width: min(560px, calc(100vw - 32px));
 }
 
-.play-shell.in-game .play-panel h1,
-.play-shell.in-game .play-panel p,
-.play-shell.in-game .menu-actions,
-.play-shell.in-game .room-list,
-.play-shell.in-game .eyebrow {
+.play-shell.in-game .play-panel > h1,
+.play-shell.in-game .play-panel > p,
+.play-shell.in-game .play-panel > .menu-actions,
+.play-shell.in-game .play-panel > .room-list,
+.play-shell.in-game .play-panel > .eyebrow {
   display: none;
 }
 
-.play-shell.in-game:not(.hud-expanded) .back-link,
-.play-shell.in-game:not(.hud-expanded) .loadout-picker {
+.play-shell.in-game:not(.menu-open) .back-link,
+.play-shell.in-game:not(.menu-open) .loadout-picker {
   display: none;
+}
+
+.escape-menu {
+  display: grid;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.escape-menu[hidden] {
+  display: none;
+}
+
+.escape-menu h2 {
+  margin: 0;
+  color: #d7f3ff;
+  font-size: 18px;
+  letter-spacing: 0;
+}
+
+.escape-menu p {
+  margin: 0;
+  color: #9bb7c4;
+  line-height: 1.5;
+}
+
+.escape-menu .menu-actions {
+  margin: 0;
 }
 
 .play-hud {
@@ -424,15 +455,6 @@ canvas {
   align-items: center;
   justify-content: space-between;
   gap: 10px;
-}
-
-.hud-toggle {
-  border: 1px solid rgba(118, 219, 255, 0.3);
-  background: rgba(5, 12, 18, 0.95);
-  color: #d7f3ff;
-  padding: 5px 7px;
-  border-radius: 4px;
-  cursor: pointer;
 }
 
 .hud-topline strong {

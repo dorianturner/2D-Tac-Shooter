@@ -38,7 +38,7 @@ export class PlayScene extends Phaser.Scene {
   private rematchRequested = false;
   private selectedGadget: GadgetKind | "none" = "none";
   private wallAngle = 0;
-  private hudExpanded = false;
+  private menuOpen = false;
   private queuedDeploy: { gadget: GadgetKind; target: Vec2; angle?: number } | undefined = undefined;
   private pendingDeploy: { gadget: GadgetKind; seq: number } | undefined = undefined;
   private roomRefreshTimer: number | undefined = undefined;
@@ -55,7 +55,7 @@ export class PlayScene extends Phaser.Scene {
     this.cameras.main.setBackgroundColor(colors.bg);
     this.mapLayer = this.add.graphics();
     this.entityLayer = this.add.graphics();
-    this.keys = this.input.keyboard?.addKeys("W,A,S,D,E,R,SHIFT,ONE,TWO,THREE,FOUR,FIVE") as Record<string, Phaser.Input.Keyboard.Key>;
+    this.keys = this.input.keyboard?.addKeys("W,A,S,D,E,R,ESC,SHIFT,ONE,TWO,THREE,FOUR,FIVE") as Record<string, Phaser.Input.Keyboard.Key>;
     this.input.on("pointerdown", (pointer: Phaser.Input.Pointer) => this.queueGadgetDeploy(pointer));
     this.input.on("wheel", (_pointer: Phaser.Input.Pointer, _objects: unknown[], _dx: number, dy: number) => {
       if (this.selectedGadget !== "wall") return;
@@ -72,22 +72,23 @@ export class PlayScene extends Phaser.Scene {
     if (!this.snapshot || !this.welcome || !this.keys) return;
     const pointer = this.input.activePointer;
     const world = this.cameras.main.getWorldPoint(pointer.x, pointer.y);
-    if (this.keys.ONE && Phaser.Input.Keyboard.JustDown(this.keys.ONE)) this.toggleGadget("camera");
-    if (this.keys.TWO && Phaser.Input.Keyboard.JustDown(this.keys.TWO)) this.toggleGadget("molotov");
-    if (this.keys.THREE && Phaser.Input.Keyboard.JustDown(this.keys.THREE)) this.toggleGadget("smoke");
-    if (this.keys.FOUR && Phaser.Input.Keyboard.JustDown(this.keys.FOUR)) this.toggleGadget("wall");
-    if (this.keys.FIVE && Phaser.Input.Keyboard.JustDown(this.keys.FIVE)) this.toggleGadget("sound");
+    if (this.keys.ESC && Phaser.Input.Keyboard.JustDown(this.keys.ESC)) this.toggleMenu();
+    if (!this.menuOpen && this.keys.ONE && Phaser.Input.Keyboard.JustDown(this.keys.ONE)) this.toggleGadget("camera");
+    if (!this.menuOpen && this.keys.TWO && Phaser.Input.Keyboard.JustDown(this.keys.TWO)) this.toggleGadget("molotov");
+    if (!this.menuOpen && this.keys.THREE && Phaser.Input.Keyboard.JustDown(this.keys.THREE)) this.toggleGadget("smoke");
+    if (!this.menuOpen && this.keys.FOUR && Phaser.Input.Keyboard.JustDown(this.keys.FOUR)) this.toggleGadget("wall");
+    if (!this.menuOpen && this.keys.FIVE && Phaser.Input.Keyboard.JustDown(this.keys.FIVE)) this.toggleGadget("sound");
     this.currentAim = Math.atan2(world.y - this.snapshot.self.position.y, world.x - this.snapshot.self.position.x);
-    const deploy = this.queuedDeploy;
+    const deploy = this.menuOpen ? undefined : this.queuedDeploy;
     const command: Omit<PlayerCommand, "type" | "seq" | "tick"> = {
       move: {
-        x: Number(this.keys.D?.isDown) - Number(this.keys.A?.isDown),
-        y: Number(this.keys.S?.isDown) - Number(this.keys.W?.isDown)
+        x: this.menuOpen ? 0 : Number(this.keys.D?.isDown) - Number(this.keys.A?.isDown),
+        y: this.menuOpen ? 0 : Number(this.keys.S?.isDown) - Number(this.keys.W?.isDown)
       },
       aim: this.currentAim,
-      fire: pointer.isDown && pointer.button === 0 && this.selectedGadget === "none",
-      use: this.keys.E && Phaser.Input.Keyboard.JustDown(this.keys.E) ? "door-toggle" : "none",
-      reload: this.keys.R ? Phaser.Input.Keyboard.JustDown(this.keys.R) : false,
+      fire: !this.menuOpen && pointer.isDown && pointer.button === 0 && this.selectedGadget === "none",
+      use: !this.menuOpen && this.keys.E && Phaser.Input.Keyboard.JustDown(this.keys.E) ? "door-toggle" : "none",
+      reload: !this.menuOpen && this.keys.R ? Phaser.Input.Keyboard.JustDown(this.keys.R) : false,
       walk: Boolean(this.keys.SHIFT?.isDown),
       gadget: deploy ? deploy.gadget : "none",
       ...(deploy ? { gadgetTarget: deploy.target } : {}),
@@ -142,6 +143,14 @@ export class PlayScene extends Phaser.Scene {
         </div>
         <div class="room-list"></div>
         <div class="play-hud"></div>
+        <div class="escape-menu" hidden>
+          <h2>Game Menu</h2>
+          <p>Change loadout for next round or leave the current game.</p>
+          <div class="menu-actions">
+            <button class="secondary-action" data-action="resume">Resume</button>
+            <button class="secondary-action" data-action="leave">Leave Game</button>
+          </div>
+        </div>
         <div class="match-actions" hidden>
           <button class="primary-action" data-action="rematch">Rematch</button>
           <button class="secondary-action" data-action="lobby">Return to Lobby</button>
@@ -160,6 +169,8 @@ export class PlayScene extends Phaser.Scene {
       this.setHud("Rematch requested. Waiting for the other player.");
     });
     this.shell.querySelector("[data-action='lobby']")?.addEventListener("click", () => this.returnToLobby());
+    this.shell.querySelector("[data-action='resume']")?.addEventListener("click", () => this.closeMenu());
+    this.shell.querySelector("[data-action='leave']")?.addEventListener("click", () => this.returnToLobby());
     this.shell.querySelector<HTMLSelectElement>("[data-loadout='class']")?.addEventListener("change", (event) => {
       this.selectedClass = (event.currentTarget as HTMLSelectElement).value as PlayerClassPresetId;
       this.handleLoadoutChange();
@@ -231,7 +242,7 @@ export class PlayScene extends Phaser.Scene {
     this.renderedPlayers.clear();
     this.rematchRequested = false;
     this.selectedGadget = "none";
-    this.hudExpanded = false;
+    this.menuOpen = false;
     this.queuedDeploy = undefined;
     this.pendingDeploy = undefined;
     this.socket = new WebSocket("ws://localhost:8787");
@@ -255,7 +266,7 @@ export class PlayScene extends Phaser.Scene {
       this.welcome = message;
       this.renderedWalls.clear();
       this.shell?.classList.add("in-game");
-      this.updateHudExpandedClass();
+      this.updateMenuOpenClass();
       const roomHeader = this.shell?.querySelector<HTMLElement>(".room-header");
       if (roomHeader) roomHeader.style.display = "none";
       drawMap(this.mapLayer!, message.map);
@@ -478,9 +489,26 @@ export class PlayScene extends Phaser.Scene {
   }
 
   private toggleGadget(gadget: GadgetKind): void {
+    if (this.menuOpen) return;
     this.selectedGadget = this.selectedGadget === gadget ? "none" : gadget;
     this.pendingDeploy = undefined;
     if (this.selectedGadget === "wall") this.wallAngle = this.currentAim;
+  }
+
+  private toggleMenu(): void {
+    this.menuOpen = !this.menuOpen;
+    if (this.menuOpen) {
+      this.selectedGadget = "none";
+      this.queuedDeploy = undefined;
+      this.pendingDeploy = undefined;
+    }
+    this.updateMenuOpenClass();
+    this.updateLoadoutStatus(this.snapshot);
+  }
+
+  private closeMenu(): void {
+    this.menuOpen = false;
+    this.updateMenuOpenClass();
   }
 
   private drawShotImpact(impact: ShotImpact, tick: number): void {
@@ -526,7 +554,6 @@ export class PlayScene extends Phaser.Scene {
         <span>R${round.roundNumber}</span>
         <strong>${time}</strong>
         <span>${score}</span>
-        <button class="hud-toggle" data-action="hud-toggle">${this.hudExpanded ? "Min" : "Info"}</button>
       </div>
       <div class="hud-bars">
         <label>HP <span>${snapshot.self.hp}/5</span></label>
@@ -537,16 +564,8 @@ export class PlayScene extends Phaser.Scene {
         ${gadgetButtons}
       </div>
       ${objectiveText ? `<div class="hud-meta compact">${objectiveText}</div>` : ""}
-      ${this.hudExpanded ? `<div class="hud-meta">${this.welcome.roomId} | ${snapshot.playerId.toUpperCase()} | ${snapshot.self.className} | ${snapshot.self.weaponName} | ${this.welcome.map.name}${roundResult}</div>` : ""}
-      ${this.hudExpanded ? `<div class="hud-meta">${snapshot.nextLoadout ? `Next round: ${formatLoadout(snapshot.nextLoadout)}` : "Loadout changes above apply next round"}</div>` : ""}
       ${doorDebug ? `<div class="hud-meta">${doorDebug}</div>` : ""}
     `);
-    this.hud?.querySelector<HTMLButtonElement>("[data-action='hud-toggle']")?.addEventListener("click", () => {
-      this.hudExpanded = !this.hudExpanded;
-      this.updateHudExpandedClass();
-      this.updateLoadoutStatus(snapshot);
-      this.updateMatchHud(snapshot);
-    });
     this.hud?.querySelectorAll<HTMLButtonElement>("[data-gadget]").forEach((button) => {
       button.addEventListener("click", () => this.toggleGadget(button.dataset.gadget as GadgetKind));
     });
@@ -601,8 +620,10 @@ export class PlayScene extends Phaser.Scene {
     note.textContent = `Will apply next round: ${formatLoadout(selectedLoadout)}`;
   }
 
-  private updateHudExpandedClass(): void {
-    this.shell?.classList.toggle("hud-expanded", this.hudExpanded);
+  private updateMenuOpenClass(): void {
+    this.shell?.classList.toggle("menu-open", this.menuOpen);
+    const menu = this.shell?.querySelector<HTMLElement>(".escape-menu");
+    if (menu) menu.hidden = !this.menuOpen;
   }
 }
 
