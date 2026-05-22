@@ -1,0 +1,6 @@
+{
+  "installCommand": "npm ci",
+  "buildCommand": "npm run build --workspace @tac/client",
+  "outputDirectory": "apps/client/dist",
+  "framework": "vite"
+}

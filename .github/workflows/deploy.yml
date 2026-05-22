@@ -1,0 +1,108 @@
+name: Deploy
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+concurrency:
+  group: production
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Test
+        run: npm test
+
+      - name: Build
+        run: npm run build
+
+  deploy-client:
+    needs: verify
+    runs-on: ubuntu-latest
+    env:
+      VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+      VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install
+        run: npm ci
+
+      - name: Pull Vercel environment
+        run: npx vercel pull --yes --environment=production --token=${{ secrets.VERCEL_TOKEN }}
+
+      - name: Build Vercel output
+        run: npx vercel build --prod --token=${{ secrets.VERCEL_TOKEN }}
+
+      - name: Deploy Vercel output
+        run: npx vercel deploy --prebuilt --prod --token=${{ secrets.VERCEL_TOKEN }}
+
+  deploy-server:
+    needs: verify
+    runs-on: ubuntu-latest
+    env:
+      ORACLE_HOST: ${{ secrets.ORACLE_HOST || '193.123.190.8' }}
+      ORACLE_USER: ${{ secrets.ORACLE_USER || 'opc' }}
+      ORACLE_PORT: ${{ secrets.ORACLE_PORT || '22' }}
+      RELEASE: ${{ github.sha }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Create deployment archive
+        run: |
+          tar \
+            --exclude='.git' \
+            --exclude='node_modules' \
+            --exclude='apps/client/dist' \
+            --exclude='apps/server/dist' \
+            --exclude='packages/shared/dist' \
+            -czf "/tmp/tac-shooter-${RELEASE}.tar.gz" .
+
+      - name: Configure SSH
+        run: |
+          mkdir -p ~/.ssh
+          printf '%s\n' "${{ secrets.ORACLE_SSH_PRIVATE_KEY }}" > ~/.ssh/oracle
+          chmod 600 ~/.ssh/oracle
+          ssh-keyscan -p "${ORACLE_PORT}" "${ORACLE_HOST}" >> ~/.ssh/known_hosts
+
+      - name: Prepare remote directories
+        run: |
+          ssh -i ~/.ssh/oracle -p "${ORACLE_PORT}" "${ORACLE_USER}@${ORACLE_HOST}" \
+            "sudo mkdir -p /opt/tac-shooter && sudo chown -R ${ORACLE_USER}:${ORACLE_USER} /opt/tac-shooter"
+
+      - name: Upload release archive
+        run: |
+          scp -i ~/.ssh/oracle -P "${ORACLE_PORT}" "/tmp/tac-shooter-${RELEASE}.tar.gz" \
+            "${ORACLE_USER}@${ORACLE_HOST}:/tmp/tac-shooter-${RELEASE}.tar.gz"
+
+      - name: Deploy server
+        run: |
+          ssh -i ~/.ssh/oracle -p "${ORACLE_PORT}" "${ORACLE_USER}@${ORACLE_HOST}" \
+            "GITHUB_SHA=${RELEASE} bash -s" < scripts/deploy-oracle-server.sh

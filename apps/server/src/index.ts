@@ -72,6 +72,10 @@ async function handleHttp(request: import("node:http").IncomingMessage, response
       sendJson(response, 200, { maps: await listMaps() });
       return;
     }
+    if (request.method === "GET" && url.pathname === "/api/health") {
+      sendJson(response, 200, { ok: true, uptimeSeconds: Math.round(process.uptime()), rooms: rooms.size });
+      return;
+    }
     if (request.method === "GET" && url.pathname === "/api/rooms") {
       cleanupExpiredRooms();
       sendJson(response, 200, { rooms: listRooms() });

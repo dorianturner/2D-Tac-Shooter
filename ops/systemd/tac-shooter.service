@@ -1,0 +1,21 @@
+[Unit]
+Description=Tactical Shooter authoritative server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=opc
+Group=opc
+WorkingDirectory=/opt/tac-shooter/current
+Environment=NODE_ENV=production
+Environment=PORT=8787
+Environment=CORS_ORIGIN=*
+ExecStart=/usr/bin/npm run start:server
+Restart=always
+RestartSec=5
+KillSignal=SIGINT
+TimeoutStopSec=20
+
+[Install]
+WantedBy=multi-user.target
