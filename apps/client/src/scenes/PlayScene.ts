@@ -1,5 +1,5 @@
 import Phaser from "phaser";
-import { distance, isHingedDoorSegment, lineIntersection, normalize, type GadgetKind, type PlayerCommand, type PlayerId, type PlayerState, type RoomSummary, type ServerMessage, type ServerSnapshot, type ServerWelcome, type ShotImpact, type Vec2, type Wall, TICK_RATE } from "@tac/shared";
+import { distance, isHingedDoorSegment, lineIntersection, normalize, playerClassPresets, weaponPresets, type GadgetKind, type PlayerClassPresetId, type PlayerCommand, type PlayerId, type PlayerState, type RoomSummary, type ServerMessage, type ServerSnapshot, type ServerWelcome, type ShotImpact, type Vec2, type Wall, type WeaponPresetId, TICK_RATE } from "@tac/shared";
 import { listMaps, listRooms } from "../editorApi";
 import { mapSummaryToPickable, pickFromList } from "../fuzzyPicker";
 import { colors, drawDeployedCamera, drawFogOfWar, drawMap, drawMolotovZone, drawPlayer, drawSmokeZone, drawSoundSensorZone } from "../render";
@@ -43,6 +43,8 @@ export class PlayScene extends Phaser.Scene {
   private roomRefreshTimer: number | undefined = undefined;
   private roomRefreshStartedAt = 0;
   private refreshBar: HTMLElement | undefined = undefined;
+  private selectedClass: PlayerClassPresetId = "operator";
+  private selectedWeapon: WeaponPresetId = "assault";
 
   constructor() {
     super("play");
@@ -111,6 +113,18 @@ export class PlayScene extends Phaser.Scene {
         <p class="eyebrow">Local Multiplayer</p>
         <h1>Create Or Join</h1>
         <p>Pick a saved map, create a room, then open another tab to join it. Movement is WASD; doors can be pushed or toggled with E.</p>
+        <div class="loadout-picker">
+          <label>Class
+            <select data-loadout="class">
+              ${Object.values(playerClassPresets).map((preset) => `<option value="${preset.id}">${preset.name}</option>`).join("")}
+            </select>
+          </label>
+          <label>Gun
+            <select data-loadout="weapon">
+              ${Object.values(weaponPresets).map((weapon) => `<option value="${weapon.id}">${weapon.name}</option>`).join("")}
+            </select>
+          </label>
+        </div>
         <div class="menu-actions">
           <button class="primary-action" data-action="create">Create Game</button>
           <button class="secondary-action" data-action="join">Join Game</button>
@@ -139,6 +153,12 @@ export class PlayScene extends Phaser.Scene {
       this.setHud("Rematch requested. Waiting for the other player.");
     });
     this.shell.querySelector("[data-action='lobby']")?.addEventListener("click", () => this.returnToLobby());
+    this.shell.querySelector<HTMLSelectElement>("[data-loadout='class']")?.addEventListener("change", (event) => {
+      this.selectedClass = (event.currentTarget as HTMLSelectElement).value as PlayerClassPresetId;
+    });
+    this.shell.querySelector<HTMLSelectElement>("[data-loadout='weapon']")?.addEventListener("change", (event) => {
+      this.selectedWeapon = (event.currentTarget as HTMLSelectElement).value as WeaponPresetId;
+    });
     void this.refreshRooms();
     this.startRoomRefresh();
   }
@@ -147,7 +167,7 @@ export class PlayScene extends Phaser.Scene {
     const maps = await listMaps();
     const map = await pickFromList("Create Game On Map", maps.map(mapSummaryToPickable));
     if (!map) return;
-    this.connect({ mode: "create", mapId: map.id, debug: false });
+    this.connect({ mode: "create", mapId: map.id, debug: false, loadout: this.currentLoadout() });
   }
 
   private async joinGame(): Promise<void> {
@@ -156,7 +176,7 @@ export class PlayScene extends Phaser.Scene {
     const picked = roomItems.length > 0 ? await pickFromList("Join Room", roomItems) : null;
     const typed = picked?.id ?? window.prompt("Room code");
     if (!typed) return;
-    this.connect({ mode: "join", roomId: typed, debug: false });
+    this.connect({ mode: "join", roomId: typed, debug: false, loadout: this.currentLoadout() });
   }
 
   private async refreshRooms(): Promise<void> {
@@ -168,7 +188,7 @@ export class PlayScene extends Phaser.Scene {
         ? rooms.map((room) => `<button data-room="${room.id}">${room.id} | ${room.mapName} | ${room.playerCount}/2 | ${room.phase}</button>`).join("")
         : `<span>No active rooms yet.</span>`;
       container.querySelectorAll<HTMLButtonElement>("button[data-room]").forEach((button) => {
-        button.addEventListener("click", () => this.connect({ mode: "join", roomId: button.dataset.room!, debug: false }));
+        button.addEventListener("click", () => this.connect({ mode: "join", roomId: button.dataset.room!, debug: false, loadout: this.currentLoadout() }));
       });
     } catch {
       container.innerHTML = `<span>Room list unavailable.</span>`;
@@ -193,7 +213,7 @@ export class PlayScene extends Phaser.Scene {
     this.roomRefreshTimer = undefined;
   }
 
-  private connect(hello: { mode: "create" | "join"; mapId?: string; roomId?: string; debug: boolean }): void {
+  private connect(hello: { mode: "create" | "join"; mapId?: string; roomId?: string; debug: boolean; loadout?: { classId: PlayerClassPresetId; weaponId: WeaponPresetId } }): void {
     this.stopRoomRefresh();
     this.socket?.close();
     this.snapshot = undefined;
@@ -206,6 +226,10 @@ export class PlayScene extends Phaser.Scene {
     this.socket = new WebSocket("ws://localhost:8787");
     this.socket.addEventListener("open", () => this.send({ type: "hello", ...hello }));
     this.socket.addEventListener("message", (event) => this.onMessage(JSON.parse(event.data as string) as ServerMessage));
+  }
+
+  private currentLoadout(): { classId: PlayerClassPresetId; weaponId: WeaponPresetId } {
+    return { classId: this.selectedClass, weaponId: this.selectedWeapon };
   }
 
   private onMessage(message: ServerMessage): void {
@@ -323,7 +347,8 @@ export class PlayScene extends Phaser.Scene {
 
   private drawAimGuide(origin: Vec2, aim: number): void {
     if (!this.entityLayer) return;
-    const end = { x: origin.x + Math.cos(aim) * 520, y: origin.y + Math.sin(aim) * 520 };
+    const range = this.snapshot ? weaponPresets[this.snapshot.self.weaponId].effectiveRange : 520;
+    const end = { x: origin.x + Math.cos(aim) * range, y: origin.y + Math.sin(aim) * range };
     drawDottedLine(this.entityLayer, origin, end, this.selectedGadget === "none" ? colors.blue : colors.sensor, 0.3, 7, 9);
   }
 
@@ -475,7 +500,7 @@ export class PlayScene extends Phaser.Scene {
         <button class="${this.selectedGadget === "wall" ? "selected" : ""}" data-gadget="wall">WALL ${snapshot.self.gadgets.wall}</button>
         <button class="${this.selectedGadget === "sound" ? "selected" : ""}" data-gadget="sound">SND ${snapshot.self.gadgets.sound}</button>
       </div>
-      <div class="hud-meta">${this.welcome.roomId} | ${snapshot.playerId.toUpperCase()} | ${this.welcome.map.name}${roundResult}</div>
+      <div class="hud-meta">${this.welcome.roomId} | ${snapshot.playerId.toUpperCase()} | ${snapshot.self.className} | ${snapshot.self.weaponName} | ${this.welcome.map.name}${roundResult}</div>
       ${doorDebug ? `<div class="hud-meta">${doorDebug}</div>` : ""}
     `);
     this.hud?.querySelectorAll<HTMLButtonElement>("[data-gadget]").forEach((button) => {

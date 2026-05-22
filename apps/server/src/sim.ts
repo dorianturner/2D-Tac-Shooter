@@ -1,6 +1,8 @@
 import {
   add,
   angleToVector,
+  createPlayerClass,
+  createWeapon,
   distance,
   distanceToSegment,
   isHingedDoorSegment,
@@ -23,6 +25,7 @@ import {
   type MapDefinition,
   type MolotovZone,
   type PlayerCommand,
+  type PlayerLoadoutSelection,
   type PlayerId,
   type PlayerState,
   type ReplayLog,
@@ -48,10 +51,7 @@ import {
   DOOR_PUSH_SKIN,
   DOOR_PUSH_STRENGTH,
   DOOR_TOGGLE_RANGE,
-  FIRE_COOLDOWN_TICKS,
   FIRE_RANGE,
-  GADGET_LOADOUT,
-  MAG_SIZE,
   MOLOTOV_DAMAGE_INTERVAL,
   MOLOTOV_RANGE,
   MOLOTOV_RADIUS,
@@ -73,8 +73,6 @@ import {
   SOUND_SENSOR_RADIUS,
   SOUND_SENSOR_SPEED_THRESHOLD,
   SOUND_SENSOR_TRIGGER_TICKS,
-  VIEW_FOV,
-  VIEW_RANGE
 } from "./sim/config.js";
 import { clampTarget, createDeployableWall, hasPlacementLineOfSight, isPlacementClear, resolveThrownTarget } from "./sim/deployables.js";
 import { hasConeLineOfSightWithSmoke, hasLineOfSightWithSmoke, visibleConePolygonWithSmoke } from "./sim/visibility.js";
@@ -166,16 +164,21 @@ export function createRoom(id: string, sourceMap: MapDefinition = sampleMap): Ro
       {
         id: spawn.id,
         team: spawn.team,
+        classId: "operator",
+        className: "Operator",
+        weaponId: "assault",
+        weaponName: "Assault Rifle",
+        gadgetLoadout: createPlayerClass().gadgets,
         position: { ...spawn.position },
         velocity: { x: 0, y: 0 },
         aim: spawn.angle,
         alive: true,
         hp: PLAYER_MAX_HP,
-        ammo: MAG_SIZE,
-        magSize: MAG_SIZE,
+        ammo: createWeapon().magSize,
+        magSize: createWeapon().magSize,
         isReloading: false,
         walking: false,
-        gadgets: { ...GADGET_LOADOUT }
+        gadgets: createPlayerClass().gadgets
       }
     ])
   ) as Record<PlayerId, PlayerState>;
@@ -219,10 +222,24 @@ function createSlot(id: PlayerId): PlayerSlot {
   };
 }
 
-export function joinRoom(room: RoomState, debug = false, preferred?: PlayerId): ServerWelcome | null {
+function applyPlayerLoadout(player: PlayerState, selection?: PlayerLoadoutSelection): void {
+  const playerClass = createPlayerClass(selection);
+  const weapon = createWeapon(selection);
+  player.classId = playerClass.id;
+  player.className = playerClass.name;
+  player.weaponId = weapon.id;
+  player.weaponName = weapon.name;
+  player.gadgetLoadout = { ...playerClass.gadgets };
+  player.gadgets = { ...playerClass.gadgets };
+  player.magSize = weapon.magSize;
+  player.ammo = Math.min(player.ammo, weapon.magSize);
+}
+
+export function joinRoom(room: RoomState, debug = false, preferred?: PlayerId, loadout?: PlayerLoadoutSelection): ServerWelcome | null {
   const playerId = preferred ?? (!room.slots.p1.connected ? "p1" : !room.slots.p2.connected ? "p2" : null);
   if (!playerId || room.round.matchWinner) return null;
   const slot = room.slots[playerId];
+  applyPlayerLoadout(room.players[playerId], loadout);
   slot.connected = true;
   slot.debug = debug;
   if (room.slots.p1.connected && room.slots.p2.connected && room.round.phase === "lobby") {
@@ -726,6 +743,7 @@ function resolveShot(room: RoomState, shooterId: PlayerId): void {
   const slot = room.slots[shooterId];
   if (room.tick < slot.nextFireTick) return;
   const shooter = room.players[shooterId];
+  const weapon = createWeapon({ weaponId: shooter.weaponId });
   if (!shooter.alive) return;
   completeReload(shooter, room.tick);
   if (shooter.isReloading) return;
@@ -734,17 +752,17 @@ function resolveShot(room: RoomState, shooterId: PlayerId): void {
     return;
   }
   shooter.ammo -= 1;
-  slot.nextFireTick = room.tick + FIRE_COOLDOWN_TICKS;
+  slot.nextFireTick = room.tick + weapon.fireCooldownTicks;
   const origin = { ...shooter.position };
-  const rayEnd = add(origin, mul(angleToVector(shooter.aim), FIRE_RANGE));
-  const hit = resolveHitscan(room, shooterId, origin, rayEnd);
+  const rayEnd = add(origin, mul(angleToVector(shooter.aim), weapon.effectiveRange));
+  const hit = resolveHitscan(room, shooterId, origin, rayEnd, weapon.effectiveRange);
   const impact: ShotImpact = { id: `${shooterId}-${room.tick}-${room.shotImpacts.length}`, tick: room.tick, shooter: shooterId, origin, end: hit.end, hit: hit.kind, ...(hit.targetId ? { targetId: hit.targetId } : {}), ...(hit.wallId ? { wallId: hit.wallId } : {}), ...(hit.cameraId ? { cameraId: hit.cameraId } : {}), ...(hit.soundSensorId ? { soundSensorId: hit.soundSensorId } : {}) };
   room.shotImpacts.push(impact);
   pushEvent(room, { type: "shot", tick: room.tick, impact });
 
   if (hit.kind === "player" && hit.targetId) {
     const target = room.players[hit.targetId];
-    target.hp = Math.max(0, target.hp - 1);
+    target.hp = Math.max(0, target.hp - weapon.damage);
     pushEvent(room, { type: "hit", tick: room.tick, shooter: shooterId, target: hit.targetId });
     if (target.hp <= 0) {
       target.alive = false;
@@ -760,17 +778,17 @@ function resolveShot(room: RoomState, shooterId: PlayerId): void {
   }
 }
 
-function resolveHitscan(room: RoomState, shooterId: PlayerId, origin: Vec2, rayEnd: Vec2): { kind: ShotImpact["hit"]; end: Vec2; targetId?: PlayerId; wallId?: string; cameraId?: string; soundSensorId?: string } {
+function resolveHitscan(room: RoomState, shooterId: PlayerId, origin: Vec2, rayEnd: Vec2, maxRange = FIRE_RANGE): { kind: ShotImpact["hit"]; end: Vec2; targetId?: PlayerId; wallId?: string; cameraId?: string; soundSensorId?: string } {
   const direction = normalize({ x: rayEnd.x - origin.x, y: rayEnd.y - origin.y });
-  let nearest: { kind: ShotImpact["hit"]; distance: number; end: Vec2; targetId?: PlayerId; wallId?: string; cameraId?: string; soundSensorId?: string } = { kind: "none", distance: FIRE_RANGE, end: rayEnd };
+  let nearest: { kind: ShotImpact["hit"]; distance: number; end: Vec2; targetId?: PlayerId; wallId?: string; cameraId?: string; soundSensorId?: string } = { kind: "none", distance: maxRange, end: rayEnd };
   const targetId: PlayerId = shooterId === "p1" ? "p2" : "p1";
   const target = room.players[targetId];
-  const playerDistance = target.alive ? rayCircleDistance(origin, direction, target.position, PLAYER_RADIUS) : null;
+  const playerDistance = target.alive ? rayCircleDistance(origin, direction, target.position, PLAYER_RADIUS, maxRange) : null;
   if (playerDistance !== null) nearest = { kind: "player", distance: playerDistance, end: add(origin, mul(direction, playerDistance)), targetId };
 
   for (const camera of room.deployedCameras) {
     if (camera.destroyed) continue;
-    const cameraDistance = rayCircleDistance(origin, direction, camera.position, CAMERA_HIT_RADIUS);
+    const cameraDistance = rayCircleDistance(origin, direction, camera.position, CAMERA_HIT_RADIUS, maxRange);
     if (cameraDistance !== null && cameraDistance < nearest.distance) {
       nearest = { kind: "camera", distance: cameraDistance, end: add(origin, mul(direction, cameraDistance)), cameraId: camera.id };
     }
@@ -778,7 +796,7 @@ function resolveHitscan(room: RoomState, shooterId: PlayerId, origin: Vec2, rayE
 
   for (const sensor of room.soundSensors) {
     if (sensor.destroyed) continue;
-    const sensorDistance = rayCircleDistance(origin, direction, sensor.position, SOUND_SENSOR_HIT_RADIUS);
+    const sensorDistance = rayCircleDistance(origin, direction, sensor.position, SOUND_SENSOR_HIT_RADIUS, maxRange);
     if (sensorDistance !== null && sensorDistance < nearest.distance) {
       nearest = { kind: "sound-sensor", distance: sensorDistance, end: add(origin, mul(direction, sensorDistance)), soundSensorId: sensor.id };
     }
@@ -798,10 +816,10 @@ function resolveHitscan(room: RoomState, shooterId: PlayerId, origin: Vec2, rayE
   return nearest;
 }
 
-function rayCircleDistance(origin: Vec2, direction: Vec2, center: Vec2, radius: number): number | null {
+function rayCircleDistance(origin: Vec2, direction: Vec2, center: Vec2, radius: number, maxRange = FIRE_RANGE): number | null {
   const toCenter = { x: center.x - origin.x, y: center.y - origin.y };
   const projection = toCenter.x * direction.x + toCenter.y * direction.y;
-  if (projection < 0 || projection > FIRE_RANGE) return null;
+  if (projection < 0 || projection > maxRange) return null;
   return distance(add(origin, mul(direction, projection)), center) <= radius ? projection : null;
 }
 
@@ -870,12 +888,13 @@ function resetPlayersForRound(room: RoomState): void {
     player.aim = spawn.angle;
     player.alive = true;
     player.hp = PLAYER_MAX_HP;
-    player.ammo = MAG_SIZE;
-    player.magSize = MAG_SIZE;
+    const weapon = createWeapon({ weaponId: player.weaponId });
+    player.ammo = weapon.magSize;
+    player.magSize = weapon.magSize;
     player.isReloading = false;
     player.walking = false;
     delete player.reloadEndsAtTick;
-    player.gadgets = { ...GADGET_LOADOUT };
+    player.gadgets = { ...player.gadgetLoadout };
     room.slots[player.id].inputState = { move: { x: 0, y: 0 }, aim: spawn.angle, fire: false, walk: false };
     room.slots[player.id].pendingActions = [];
     room.slots[player.id].seenActionSeqs.clear();
@@ -980,7 +999,8 @@ export function snapshotFor(room: RoomState, playerId: PlayerId): ServerSnapshot
   if (opponent.alive && isPointVisibleToPlayer(room, self, opponent.position)) {
     visiblePlayers.push({ ...opponent, position: { ...opponent.position }, velocity: { ...opponent.velocity } });
   }
-  const polygon = visibleConePolygonWithSmoke(room.map, room.smokes, self.position, self.aim, VIEW_FOV, VIEW_RANGE, 54);
+  const selfWeapon = createWeapon({ weaponId: self.weaponId });
+  const polygon = visibleConePolygonWithSmoke(room.map, room.smokes, self.position, self.aim, selfWeapon.visionFov, selfWeapon.visionRange, 54);
   room.slots[playerId].explored.push(...polygon.filter((_, index) => index % 8 === 0));
   room.slots[playerId].explored = room.slots[playerId].explored.slice(-400);
   const visibleShotImpacts = room.shotImpacts.filter((impact) => {
@@ -1017,8 +1037,8 @@ export function snapshotFor(room: RoomState, playerId: PlayerId): ServerSnapshot
       players: Object.values(room.players),
       detections: room.detections,
       visibleByPlayer: {
-        p1: visibleConePolygonWithSmoke(room.map, room.smokes, room.players.p1.position, room.players.p1.aim, VIEW_FOV, VIEW_RANGE, 48),
-        p2: visibleConePolygonWithSmoke(room.map, room.smokes, room.players.p2.position, room.players.p2.aim, VIEW_FOV, VIEW_RANGE, 48)
+        p1: visibleConePolygonWithSmoke(room.map, room.smokes, room.players.p1.position, room.players.p1.aim, createWeapon({ weaponId: room.players.p1.weaponId }).visionFov, createWeapon({ weaponId: room.players.p1.weaponId }).visionRange, 48),
+        p2: visibleConePolygonWithSmoke(room.map, room.smokes, room.players.p2.position, room.players.p2.aim, createWeapon({ weaponId: room.players.p2.weaponId }).visionFov, createWeapon({ weaponId: room.players.p2.weaponId }).visionRange, 48)
       }
     };
   }
@@ -1027,7 +1047,8 @@ export function snapshotFor(room: RoomState, playerId: PlayerId): ServerSnapshot
 
 function isPointVisibleToPlayer(room: RoomState, player: PlayerState, point: Vec2): boolean {
   if (distance(player.position, point) <= PLAYER_CLOSE_VISION_RADIUS && hasLineOfSightWithSmoke(room.map, room.smokes, player.position, point)) return true;
-  if (hasConeLineOfSightWithSmoke(room.map, room.smokes, player.position, player.aim, VIEW_FOV, VIEW_RANGE, point)) return true;
+  const weapon = createWeapon({ weaponId: player.weaponId });
+  if (hasConeLineOfSightWithSmoke(room.map, room.smokes, player.position, player.aim, weapon.visionFov, weapon.visionRange, point)) return true;
   return room.deployedCameras.some((camera) => camera.owner === player.id && !camera.destroyed && distance(camera.position, point) <= camera.radius && hasLineOfSightWithSmoke(room.map, room.smokes, camera.position, point));
 }
 

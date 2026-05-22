@@ -1,5 +1,3 @@
-import type { GadgetKind } from "@tac/shared";
-
 export const TICK_RATE = 60;
 export const TICK_MS = 1000 / TICK_RATE;
 export const PLAYER_SPEED = 240 / TICK_RATE;
@@ -52,11 +50,3 @@ export const DOOR_COLLISION_SUBSTEPS = 6;
 export const DOOR_PUSH_SKIN = 11;
 export const DOOR_COLLISION_SKIN = 0.75;
 export const DOOR_TOGGLE_RANGE = 64;
-
-export const GADGET_LOADOUT: Record<GadgetKind, number> = {
-  camera: 1,
-  molotov: 1,
-  smoke: 2,
-  wall: 2,
-  sound: 1
-};

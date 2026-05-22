@@ -819,6 +819,48 @@ describe("authoritative simulation", () => {
     expect(room.players.p2.hp).toBe(4);
   });
 
+  it("applies class factory gadget loadouts and preserves them on round reset", () => {
+    const room = createRoom("loadouts", testMap());
+    joinRoom(room, false, "p1", { classId: "scout", weaponId: "assault" });
+    joinRoom(room, false, "p2", { classId: "breacher", weaponId: "assault" });
+    expect(room.players.p1.className).toBe("Scout");
+    expect(room.players.p1.gadgets).toMatchObject({ camera: 2, molotov: 0, sound: 2 });
+    expect(room.players.p2.gadgets).toMatchObject({ camera: 0, molotov: 2, wall: 3 });
+    for (let i = 0; i < 46; i += 1) stepRoom(room);
+    room.players.p1.gadgets.camera = 0;
+    shootUntilRoundEnds(room);
+    expect(room.players.p1.gadgets.camera).toBe(2);
+  });
+
+  it("uses selected gun factories for vision and one-shot weapon damage", () => {
+    const longMap = testMap();
+    longMap.bounds.width = 900;
+    longMap.spawns[1]!.position = { x: 430, y: 120 };
+    const assaultRoom = createRoom("assault-vision", longMap);
+    joinRoom(assaultRoom, false, "p1", { weaponId: "assault" });
+    joinRoom(assaultRoom, false, "p2");
+    for (let i = 0; i < 46; i += 1) stepRoom(assaultRoom);
+    expect(snapshotFor(assaultRoom, "p1").visiblePlayers).toHaveLength(0);
+
+    const sniperRoom = createRoom("sniper-vision", longMap);
+    joinRoom(sniperRoom, false, "p1", { weaponId: "sniper" });
+    joinRoom(sniperRoom, false, "p2");
+    for (let i = 0; i < 46; i += 1) stepRoom(sniperRoom);
+    expect(snapshotFor(sniperRoom, "p1").visiblePlayers[0]?.id).toBe("p2");
+
+    const shotgunMap = testMap();
+    shotgunMap.spawns[1]!.position = { x: 160, y: 120 };
+    const shotgunRoom = activeRoomWithLoadout(shotgunMap, { weaponId: "shotgun" });
+    expect(shotgunRoom.players.p1.weaponId).toBe("shotgun");
+    expect(shotgunRoom.players.p1.magSize).toBe(6);
+    expect(shotgunRoom.round.phase).toBe("active");
+    expect(shotgunRoom.players.p1.ammo).toBe(6);
+    applyClientMessage(shotgunRoom, "p1", { type: "command", seq: 1, tick: shotgunRoom.tick, move: { x: 0, y: 0 }, aim: 0, fire: true, use: "none" });
+    stepRoom(shotgunRoom);
+    expect(shotgunRoom.replay.events.some((event) => event.type === "kill" && event.shooter === "p1" && event.target === "p2")).toBe(true);
+    expect(shotgunRoom.round.scores.p1).toBe(1);
+  });
+
   it("destroys destructible solid walls after five shots and never destroys doors", () => {
     const map = testMap();
     map.spawns[1]!.position = { x: 260, y: 180 };
@@ -847,8 +889,12 @@ describe("authoritative simulation", () => {
 });
 
 function activeRoom(map: MapDefinition) {
+  return activeRoomWithLoadout(map);
+}
+
+function activeRoomWithLoadout(map: MapDefinition, p1Loadout?: Parameters<typeof joinRoom>[3]) {
   const room = createRoom("combat", map);
-  joinRoom(room, false, "p1");
+  joinRoom(room, false, "p1", p1Loadout);
   joinRoom(room, false, "p2");
   for (let i = 0; i < 46; i += 1) stepRoom(room);
   return room;

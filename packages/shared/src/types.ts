@@ -6,6 +6,8 @@ export type UtilityKind = "emp" | "breach" | "fake-noise" | "smoke" | "flash" | 
 export type SegmentPresetId = "wall" | "window" | "mesh" | "breakable-wall" | "door" | "deployable-wall";
 export type WallKind = "solid" | "transparent" | "door" | "mesh";
 export type GadgetKind = "camera" | "molotov" | "smoke" | "wall" | "sound";
+export type WeaponPresetId = "assault" | "sniper" | "shotgun";
+export type PlayerClassPresetId = "operator" | "scout" | "breacher";
 
 export interface Vec2 {
   x: number;
@@ -118,9 +120,40 @@ export interface PlayerCommand {
   walk?: boolean;
 }
 
+export interface WeaponDefinition {
+  id: WeaponPresetId;
+  name: string;
+  damage: number;
+  effectiveRange: number;
+  fireCooldownTicks: number;
+  magSize: number;
+  visionRange: number;
+  visionFov: number;
+}
+
+export interface PlayerClassDefinition {
+  id: PlayerClassPresetId | "custom";
+  name: string;
+  gadgets: Record<GadgetKind, number>;
+}
+
+export interface PlayerLoadoutSelection {
+  classId?: PlayerClassPresetId;
+  weaponId?: WeaponPresetId;
+  customClass?: {
+    name: string;
+    gadgets: Partial<Record<GadgetKind, number>>;
+  };
+}
+
 export interface PlayerState {
   id: PlayerId;
   team: Team;
+  classId: PlayerClassDefinition["id"];
+  className: string;
+  weaponId: WeaponPresetId;
+  weaponName: string;
+  gadgetLoadout: Record<GadgetKind, number>;
   position: Vec2;
   velocity: Vec2;
   aim: number;
@@ -281,6 +314,7 @@ export interface ClientHello {
   mode?: "create" | "join";
   mapId?: string;
   roomId?: string;
+  loadout?: PlayerLoadoutSelection;
   quickMatch?: boolean;
   reconnectToken?: string;
   debug?: boolean;

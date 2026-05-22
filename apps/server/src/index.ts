@@ -139,7 +139,7 @@ async function handleHello(socket: WebSocket, hello: ClientHello): Promise<void>
     const map = hello.mapId ? await readMap(hello.mapId) : undefined;
     room = createAndStoreRoom(roomId, map);
   }
-  const welcome = joinRoom(room, Boolean(hello.debug), preferred);
+  const welcome = joinRoom(room, Boolean(hello.debug), preferred, hello.loadout);
   if (!welcome) {
     send(socket, { type: "error", message: "Room is full" });
     return;

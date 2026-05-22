@@ -81,6 +81,29 @@ canvas {
   margin: 26px 0;
 }
 
+.loadout-picker {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  margin: 14px 0;
+}
+
+.loadout-picker label {
+  display: grid;
+  gap: 5px;
+  color: #9bb7c4;
+  font-size: 12px;
+}
+
+.loadout-picker select {
+  min-width: 0;
+  border: 1px solid rgba(118, 219, 255, 0.24);
+  background: rgba(5, 12, 18, 0.95);
+  color: #d7f3ff;
+  padding: 8px;
+  border-radius: 4px;
+}
+
 .match-actions {
   display: flex;
   flex-wrap: wrap;
