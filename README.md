@@ -2,6 +2,8 @@
 
 Competitive 2D tactical shooter prototype focused on temporary information control, repositioning, deception, and environmental adaptation.
 
+Current public url http://141.147.85.169/
+
 ## Local Development
 
 ```sh
