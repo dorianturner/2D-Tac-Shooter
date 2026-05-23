@@ -1,4 +1,4 @@
-import type { GadgetKind, PlayerClassDefinition, PlayerClassPresetId, PlayerLoadoutSelection, WeaponDefinition, WeaponPresetId } from "./types.js";
+import type { ClassAbilityId, GadgetKind, PlayerClassDefinition, PlayerClassPresetId, PlayerLoadoutSelection, WeaponDefinition, WeaponPresetId } from "./types.js";
 
 export const weaponPresets: Record<WeaponPresetId, WeaponDefinition> = {
   assault: {
@@ -47,21 +47,42 @@ export const defaultGadgetLoadout: Record<GadgetKind, number> = {
   sound: 1
 };
 
+const classAbilities: Record<ClassAbilityId, PlayerClassDefinition["ability"]> = {
+  "tactical-ping": {
+    id: "tactical-ping",
+    name: "Tactical Ping",
+    cooldownTicks: 12 * 60
+  },
+  dash: {
+    id: "dash",
+    name: "Dash",
+    cooldownTicks: 8 * 60
+  },
+  "breach-any": {
+    id: "breach-any",
+    name: "Breach",
+    cooldownTicks: 14 * 60
+  }
+};
+
 export const playerClassPresets: Record<PlayerClassPresetId, PlayerClassDefinition> = {
   operator: {
     id: "operator",
     name: "Operator",
-    gadgets: { ...defaultGadgetLoadout }
+    gadgets: { ...defaultGadgetLoadout },
+    ability: classAbilities["tactical-ping"]
   },
   scout: {
     id: "scout",
     name: "Scout",
-    gadgets: { camera: 2, molotov: 0, smoke: 2, wall: 1, sound: 2 }
+    gadgets: { camera: 2, molotov: 0, smoke: 2, wall: 1, sound: 2 },
+    ability: classAbilities.dash
   },
   breacher: {
     id: "breacher",
     name: "Breacher",
-    gadgets: { camera: 0, molotov: 2, smoke: 1, wall: 3, sound: 1 }
+    gadgets: { camera: 0, molotov: 2, smoke: 1, wall: 3, sound: 1 },
+    ability: classAbilities["breach-any"]
   }
 };
 
@@ -75,7 +96,8 @@ export function createPlayerClass(selection?: PlayerLoadoutSelection): PlayerCla
     return {
       id: "custom",
       name: selection.customClass.name || "Custom",
-      gadgets: normalizeGadgets(selection.customClass.gadgets)
+      gadgets: normalizeGadgets(selection.customClass.gadgets),
+      ability: classAbilities["tactical-ping"]
     };
   }
   return createPlayerClassFromPreset(selection?.classId ?? "operator");

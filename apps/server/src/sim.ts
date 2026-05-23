@@ -19,6 +19,7 @@ import {
   segmentPreset,
   type AuthoritativeEvent,
   type ActionResult,
+  type ClassAbilityId,
   type ClientMessage,
   type DeployedCamera,
   type Detection,
@@ -93,6 +94,7 @@ type InputState = Pick<PlayerCommand, "move" | "aim" | "fire" | "walk">;
 type PendingAction =
   | { seq: number; type: "reload" }
   | { seq: number; type: "use"; use: "breach" | "door-toggle" }
+  | { seq: number; type: "ability" }
   | { seq: number; type: "gadget"; gadget: GadgetKind; target: Vec2; angle?: number };
 
 type ActionRejectReason = NonNullable<ActionResult["reason"]>;
@@ -135,9 +137,15 @@ interface PlayerSlot {
   explored: Vec2[];
   nextFireTick: number;
   nextActionTick: number;
+  nextAbilityTick: number;
   lastSeenWalls: Map<string, Wall>;
   lastSeenCameras: Map<string, DeployedCamera>;
 }
+
+const TACTICAL_PING_RADIUS = 420;
+const TACTICAL_PING_TICKS = 90;
+const SCOUT_DASH_DISTANCE = 96;
+const BREACHER_ABILITY_RANGE = 76;
 
 type PlayerRecord = Record<PlayerId, PlayerState> & { p1: PlayerState; p2: PlayerState };
 type SlotRecord = Record<PlayerId, PlayerSlot> & { p1: PlayerSlot; p2: PlayerSlot };
@@ -174,6 +182,10 @@ export function createRoom(id: string, sourceMap: MapDefinition = sampleMap): Ro
         team: spawn.team,
         classId: "operator",
         className: "Operator",
+        abilityId: "tactical-ping",
+        abilityName: "Tactical Ping",
+        abilityCooldownTicks: createPlayerClass().ability.cooldownTicks,
+        abilityReadyAtTick: 0,
         weaponId: "assault",
         weaponName: "Assault Rifle",
         gadgetLoadout: createPlayerClass().gadgets,
@@ -226,6 +238,7 @@ function createSlot(id: PlayerId): PlayerSlot {
     explored: [],
     nextFireTick: 0,
     nextActionTick: 0,
+    nextAbilityTick: 0,
     lastSeenWalls: new Map(),
     lastSeenCameras: new Map()
   };
@@ -261,6 +274,9 @@ function applyPlayerLoadout(player: PlayerState, selection?: PlayerLoadoutSelect
   const weapon = createWeapon(selection);
   player.classId = playerClass.id;
   player.className = playerClass.name;
+  player.abilityId = playerClass.ability.id;
+  player.abilityName = playerClass.ability.name;
+  player.abilityCooldownTicks = playerClass.ability.cooldownTicks;
   player.weaponId = weapon.id;
   player.weaponName = weapon.name;
   player.gadgetLoadout = { ...playerClass.gadgets };
@@ -304,6 +320,7 @@ function enqueueCommandActions(slot: PlayerSlot, command: PlayerCommand): void {
   const actions: PendingAction[] = [];
   if (command.reload) actions.push({ seq: command.seq, type: "reload" });
   if (command.use === "breach" || command.use === "door-toggle") actions.push({ seq: command.seq, type: "use", use: command.use });
+  if (command.ability) actions.push({ seq: command.seq, type: "ability" });
   if (command.gadget && command.gadget !== "none" && command.gadgetTarget) {
     actions.push({ seq: command.seq, type: "gadget", gadget: command.gadget, target: command.gadgetTarget, ...(command.gadgetAngle !== undefined ? { angle: command.gadgetAngle } : {}) });
   }
@@ -338,6 +355,11 @@ function processPendingActions(room: RoomState, player: PlayerState, slot: Playe
     if (action.type === "use") {
       const accepted = action.use === "breach" ? breachNearestWall(room, player) : toggleNearestDoor(room, player);
       recordActionResult(slot, action.seq, "use", accepted, accepted ? undefined : "invalid");
+      continue;
+    }
+    if (action.type === "ability") {
+      const result = activateClassAbility(room, player, slot);
+      recordActionResult(slot, action.seq, "ability", result.accepted, result.accepted ? undefined : result.reason);
       continue;
     }
     if (room.tick < slot.nextActionTick) {
@@ -697,6 +719,87 @@ function toggleNearestDoor(room: RoomState, player: PlayerState): boolean {
   return true;
 }
 
+function activateClassAbility(room: RoomState, player: PlayerState, slot: PlayerSlot): DeployResult {
+  if (!player.alive) return { accepted: false, reason: "round-inactive" };
+  if (room.tick < slot.nextAbilityTick) return { accepted: false, reason: "action-lockout" };
+
+  const accepted = runClassAbility(room, player, slot);
+  if (!accepted) return { accepted: false, reason: "invalid" };
+
+  slot.nextAbilityTick = room.tick + player.abilityCooldownTicks;
+  player.abilityReadyAtTick = slot.nextAbilityTick;
+  return { accepted: true };
+}
+
+function runClassAbility(room: RoomState, player: PlayerState, slot: PlayerSlot): boolean {
+  if (player.abilityId === "tactical-ping") {
+    tacticalPing(room, player);
+    return true;
+  }
+  if (player.abilityId === "dash") {
+    scoutDash(room, player, slot);
+    return true;
+  }
+  if (player.abilityId === "breach-any") return breachAnyWall(room, player);
+  return false;
+}
+
+function tacticalPing(room: RoomState, player: PlayerState): void {
+  for (const target of enemyPlayers(room, player.id)) {
+    if (!target.alive || distance(player.position, target.position) > TACTICAL_PING_RADIUS) continue;
+    const detection: Detection = {
+      id: `${player.id}-ping-${target.id}-${room.tick}`,
+      kind: "tactical-ping",
+      position: { ...target.position },
+      radius: 28,
+      confidence: 0.78,
+      expiresAtTick: room.tick + TACTICAL_PING_TICKS,
+      owner: player.id,
+      targetId: target.id
+    };
+    room.detections.push(detection);
+    pushEvent(room, { type: "sensor-detect", tick: room.tick, sensorId: "tactical-ping", target: target.id, confidence: detection.confidence });
+  }
+}
+
+function scoutDash(room: RoomState, player: PlayerState, slot: PlayerSlot): void {
+  const move = slot.inputState.move;
+  const moveLength = Math.hypot(move.x, move.y);
+  const direction = moveLength > 0.01 ? normalize(move) : angleToVector(player.aim);
+  const desired = add(player.position, mul(direction, SCOUT_DASH_DISTANCE));
+  const next = movePlayerWithSweptCollision(room.map, player.position, desired, PLAYER_RADIUS);
+  player.velocity = { x: next.x - player.position.x, y: next.y - player.position.y };
+  player.position = next;
+}
+
+function breachAnyWall(room: RoomState, player: PlayerState): boolean {
+  const target = room.map.walls
+    .filter((wall) => !wall.destroyed && !isHingedDoorSegment(wall) && !isLevelBoundarySegment(room.map, wall) && (wall.blocksMovement || wall.blocksVision || wall.blocksShooting))
+    .map((wall) => ({ wall, distance: distanceToSegment(player.position, wall.a, wall.b) }))
+    .filter(({ distance: wallDistance }) => wallDistance <= BREACHER_ABILITY_RANGE)
+    .sort((a, b) => a.distance - b.distance)[0]?.wall;
+  if (!target) return false;
+  destroyWallSegment(room, target, player.id);
+  return true;
+}
+
+function isLevelBoundarySegment(map: MapDefinition, wall: Wall): boolean {
+  const tolerance = Math.max(12, wall.thickness);
+  const idLooksBoundary = /^(north|south|east|west|boundary|bounds?)(-|$)/i.test(wall.id);
+  const onWest = wall.a.x <= tolerance && wall.b.x <= tolerance;
+  const onEast = wall.a.x >= map.bounds.width - tolerance && wall.b.x >= map.bounds.width - tolerance;
+  const onNorth = wall.a.y <= tolerance && wall.b.y <= tolerance;
+  const onSouth = wall.a.y >= map.bounds.height - tolerance && wall.b.y >= map.bounds.height - tolerance;
+  return Boolean(idLooksBoundary || onWest || onEast || onNorth || onSouth);
+}
+
+function destroyWallSegment(room: RoomState, wall: Wall, playerId: PlayerId): void {
+  wall.hp = 0;
+  wall.destroyed = true;
+  getSlot(room, playerId).lastSeenWalls.set(wall.id, structuredClone(wall));
+  pushEvent(room, { type: "wall-destroyed", tick: room.tick, wallId: wall.id, playerId });
+}
+
 const gadgetStrategies: Record<GadgetKind, GadgetStrategy> = {
   camera: {
     kind: "camera",
@@ -915,9 +1018,7 @@ function damageWall(room: RoomState, wallId: string, shooterId: PlayerId): void 
   if (!wall || !isShootableDestructibleSegment(wall)) return;
   wall.hp = Math.max(0, (wall.hp ?? wall.maxHp ?? 1) - 1);
   if (wall.hp <= 0) {
-    wall.destroyed = true;
-    getSlot(room, shooterId).lastSeenWalls.set(wall.id, structuredClone(wall));
-    pushEvent(room, { type: "wall-destroyed", tick: room.tick, wallId: wall.id, playerId: shooterId });
+    destroyWallSegment(room, wall, shooterId);
   }
 }
 
@@ -1035,12 +1136,14 @@ function resetPlayersForRound(room: RoomState): void {
     player.walking = false;
     delete player.reloadEndsAtTick;
     player.gadgets = { ...player.gadgetLoadout };
+    player.abilityReadyAtTick = room.tick;
     slot.inputState = { move: { x: 0, y: 0 }, aim: spawn.angle, fire: false, walk: false };
     slot.pendingActions = [];
     slot.seenActionSeqs.clear();
     slot.actionResults = [];
     slot.nextFireTick = room.tick;
     slot.nextActionTick = room.tick;
+    slot.nextAbilityTick = room.tick;
     slot.lastSeenWalls.clear();
     slot.lastSeenCameras.clear();
   }
@@ -1130,8 +1233,7 @@ function breachNearestWall(room: RoomState, player: PlayerState): boolean {
     .filter(({ distance: wallDistance }) => wallDistance <= 52)
     .sort((a, b) => a.distance - b.distance)[0]?.wall;
   if (!target) return false;
-  target.destroyed = true;
-  pushEvent(room, { type: "wall-destroyed", tick: room.tick, wallId: target.id, playerId: player.id });
+  destroyWallSegment(room, target, player.id);
   return true;
 }
 

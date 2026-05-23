@@ -8,6 +8,7 @@ export type WallKind = "solid" | "transparent" | "door" | "mesh";
 export type GadgetKind = "camera" | "molotov" | "smoke" | "wall" | "sound";
 export type WeaponPresetId = "assault" | "sniper" | "shotgun";
 export type PlayerClassPresetId = "operator" | "scout" | "breacher";
+export type ClassAbilityId = "tactical-ping" | "dash" | "breach-any";
 
 export interface Vec2 {
   x: number;
@@ -122,6 +123,7 @@ export interface PlayerCommand {
   aim: number;
   fire: boolean;
   use: "none" | "breach" | "door-toggle";
+  ability?: boolean;
   reload?: boolean;
   gadget?: "none" | GadgetKind;
   gadgetTarget?: Vec2;
@@ -146,6 +148,11 @@ export interface PlayerClassDefinition {
   id: PlayerClassPresetId | "custom";
   name: string;
   gadgets: Record<GadgetKind, number>;
+  ability: {
+    id: ClassAbilityId;
+    name: string;
+    cooldownTicks: number;
+  };
 }
 
 export interface PlayerLoadoutSelection {
@@ -162,6 +169,10 @@ export interface PlayerState {
   team: Team;
   classId: PlayerClassDefinition["id"];
   className: string;
+  abilityId: ClassAbilityId;
+  abilityName: string;
+  abilityCooldownTicks: number;
+  abilityReadyAtTick: number;
   weaponId: WeaponPresetId;
   weaponName: string;
   gadgetLoadout: Record<GadgetKind, number>;
@@ -180,7 +191,7 @@ export interface PlayerState {
 
 export interface Detection {
   id: string;
-  kind: SensorKind | "los" | "motion-pulse" | "sound-area";
+  kind: SensorKind | "los" | "motion-pulse" | "sound-area" | "tactical-ping";
   position: Vec2;
   radius?: number;
   confidence: number;
@@ -191,7 +202,7 @@ export interface Detection {
 
 export interface ActionResult {
   seq: number;
-  action: "reload" | "gadget" | "use";
+  action: "reload" | "gadget" | "use" | "ability";
   accepted: boolean;
   reason?: "out-of-range" | "blocked-los" | "no-count" | "action-lockout" | "round-inactive" | "invalid";
 }

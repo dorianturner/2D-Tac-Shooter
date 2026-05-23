@@ -58,7 +58,7 @@ export class PlayScene extends Phaser.Scene {
     this.cameras.main.setZoom(PLAY_CAMERA_ZOOM);
     this.mapLayer = this.add.graphics();
     this.entityLayer = this.add.graphics();
-    this.keys = this.input.keyboard?.addKeys("W,A,S,D,E,R,ESC,SHIFT,ONE,TWO,THREE,FOUR,FIVE") as Record<string, Phaser.Input.Keyboard.Key>;
+    this.keys = this.input.keyboard?.addKeys("W,A,S,D,E,Q,R,ESC,SHIFT,ONE,TWO,THREE,FOUR,FIVE") as Record<string, Phaser.Input.Keyboard.Key>;
     this.input.on("pointerdown", (pointer: Phaser.Input.Pointer) => this.queueGadgetDeploy(pointer));
     this.input.on("wheel", (_pointer: Phaser.Input.Pointer, _objects: unknown[], _dx: number, dy: number) => {
       if (this.selectedGadget !== "wall") return;
@@ -91,6 +91,7 @@ export class PlayScene extends Phaser.Scene {
       aim: this.currentAim,
       fire: !this.menuOpen && pointer.isDown && pointer.button === 0 && this.selectedGadget === "none",
       use: !this.menuOpen && this.keys.E && Phaser.Input.Keyboard.JustDown(this.keys.E) ? "door-toggle" : "none",
+      ability: !this.menuOpen && this.keys.Q ? Phaser.Input.Keyboard.JustDown(this.keys.Q) : false,
       reload: !this.menuOpen && this.keys.R ? Phaser.Input.Keyboard.JustDown(this.keys.R) : false,
       walk: Boolean(this.keys.SHIFT?.isDown),
       gadget: deploy ? deploy.gadget : "none",
@@ -117,7 +118,7 @@ export class PlayScene extends Phaser.Scene {
         <a class="back-link" href="/">Back</a>
         <p class="eyebrow">Local Multiplayer</p>
         <h1>Create Or Join</h1>
-        <p>Pick a saved map, create a room, then open another tab to join it. Movement is WASD; doors can be pushed or toggled with E.</p>
+        <p>Pick a saved map, create a room, then open another tab to join it. Movement is WASD; Q uses your operator ability; doors can be pushed or toggled with E.</p>
         <div class="loadout-picker" data-loadout-picker>
           <div class="loadout-heading">
             <strong data-loadout-title>Starting Loadout</strong>
@@ -319,11 +320,18 @@ export class PlayScene extends Phaser.Scene {
       drawObjective(this.entityLayer, snapshot.round.objective.position, snapshot.round.objective.radius, snapshot.round.objective.progressTicks / snapshot.round.objective.requiredTicks);
     }
     for (const detection of snapshot.detections) {
-      if (detection.kind !== "sound-area") continue;
-      this.entityLayer.lineStyle(2, colors.warning, detection.confidence);
-      this.entityLayer.strokeCircle(detection.position.x, detection.position.y, detection.radius ?? 80);
-      this.entityLayer.fillStyle(colors.warning, 0.12);
-      this.entityLayer.fillCircle(detection.position.x, detection.position.y, detection.radius ?? 80);
+      if (detection.kind === "sound-area") {
+        this.entityLayer.lineStyle(2, colors.warning, detection.confidence);
+        this.entityLayer.strokeCircle(detection.position.x, detection.position.y, detection.radius ?? 80);
+        this.entityLayer.fillStyle(colors.warning, 0.12);
+        this.entityLayer.fillCircle(detection.position.x, detection.position.y, detection.radius ?? 80);
+      }
+      if (detection.kind === "tactical-ping") {
+        this.entityLayer.lineStyle(2, colors.sensor, detection.confidence);
+        this.entityLayer.strokeCircle(detection.position.x, detection.position.y, detection.radius ?? 28);
+        this.entityLayer.fillStyle(colors.sensor, 0.18);
+        this.entityLayer.fillCircle(detection.position.x, detection.position.y, 7);
+      }
     }
     const players = [snapshot.self, ...snapshot.visiblePlayers];
     for (const player of players) {
@@ -560,6 +568,8 @@ export class PlayScene extends Phaser.Scene {
       <button class="${this.selectedGadget === "wall" ? "selected" : ""}" data-gadget="wall">WALL ${snapshot.self.gadgets.wall}</button>
       <button class="${this.selectedGadget === "sound" ? "selected" : ""}" data-gadget="sound">SND ${snapshot.self.gadgets.sound}</button>
     `;
+    const abilityRemaining = Math.max(0, Math.ceil((snapshot.self.abilityReadyAtTick - snapshot.tick) / TICK_RATE));
+    const abilityText = abilityRemaining > 0 ? `${snapshot.self.abilityName} ${abilityRemaining}s` : `Q ${snapshot.self.abilityName}`;
     this.setHudHtml(`
       <div class="hud-topline">
         <span>R${round.roundNumber}</span>
@@ -572,6 +582,7 @@ export class PlayScene extends Phaser.Scene {
       </div>
       <div class="hud-loadout">
         <span class="${snapshot.self.isReloading ? "warn" : ""}">${snapshot.self.isReloading ? "RELOADING" : `AMMO ${snapshot.self.ammo}/${snapshot.self.magSize}`}</span>
+        <span class="${abilityRemaining > 0 ? "warn" : ""}">${abilityText}</span>
         ${gadgetButtons}
       </div>
       ${objectiveText ? `<div class="hud-meta compact">${objectiveText}</div>` : ""}
@@ -656,7 +667,7 @@ function loadoutDetailsHtml(loadout: PlayerLoadoutSelection): string {
     .map(([kind, count]) => `${kind.toUpperCase()} ${count}`)
     .join(" / ");
   return `
-    <div><strong>${playerClass.name}</strong><span>${gadgets || "No gadgets"}</span></div>
+    <div><strong>${playerClass.name}</strong><span>Q ${playerClass.ability.name} | ${gadgets || "No gadgets"}</span></div>
     <div><strong>${weapon.name}</strong><span>DMG ${weapon.damage} | RNG ${formatRange(weapon.effectiveRange)} | MAG ${weapon.magSize} | VISION ${weapon.visionRange}px / ${Math.round((weapon.visionFov * 180) / Math.PI)}deg${weapon.pelletCount > 1 ? ` | ${weapon.pelletCount} pellets` : ""}</span></div>
   `;
 }

@@ -941,6 +941,56 @@ describe("authoritative simulation", () => {
     expect(room.players.p1.gadgets.camera).toBe(2);
   });
 
+  it("operator tactical ping reveals enemies through walls and enters cooldown", () => {
+    const map = testMap();
+    map.walls.push(createWall("ping-wall", "solid", { x: 150, y: 80 }, { x: 150, y: 160 }, 8));
+    const room = activeRoomWithLoadout(map, { classId: "operator", weaponId: "assault" });
+
+    applyClientMessage(room, "p1", { type: "command", seq: 1, tick: room.tick, move: { x: 0, y: 0 }, aim: 0, fire: false, use: "none", ability: true });
+    stepRoom(room);
+
+    const snapshot = snapshotFor(room, "p1");
+    const pings = snapshot.detections.filter((detection) => detection.kind === "tactical-ping");
+    expect(pings).toHaveLength(1);
+    expect(pings[0]?.targetId).toBe("p2");
+    expect(snapshot.self.abilityReadyAtTick).toBeGreaterThan(snapshot.tick);
+
+    applyClientMessage(room, "p1", { type: "command", seq: 2, tick: room.tick, move: { x: 0, y: 0 }, aim: 0, fire: false, use: "none", ability: true });
+    stepRoom(room);
+    const result = snapshotFor(room, "p1").actionResults.find((action) => action.seq === 2 && action.action === "ability");
+    expect(result).toMatchObject({ accepted: false, reason: "action-lockout" });
+  });
+
+  it("scout dash moves through collision without leaving map bounds", () => {
+    const room = activeRoomWithLoadout(testMap(), { classId: "scout", weaponId: "assault" });
+    applyClientMessage(room, "p1", { type: "command", seq: 1, tick: room.tick, move: { x: 0, y: 0 }, aim: 0, fire: false, use: "none", ability: true });
+    stepRoom(room);
+    expect(room.players.p1.position.x).toBeGreaterThan(120);
+
+    const boundsRoom = activeRoomWithLoadout(testMap(), { classId: "scout", weaponId: "assault" });
+    boundsRoom.players.p1.position = { x: 288, y: 120 };
+    applyClientMessage(boundsRoom, "p1", { type: "command", seq: 1, tick: boundsRoom.tick, move: { x: 0, y: 0 }, aim: 0, fire: false, use: "none", ability: true });
+    stepRoom(boundsRoom);
+    expect(boundsRoom.players.p1.position.x).toBeLessThanOrEqual(boundsRoom.map.bounds.width - 10);
+  });
+
+  it("breacher ability destroys non-level walls but preserves boundary walls", () => {
+    const map = testMap();
+    map.walls.push(createWall("hard-wall", "solid", { x: 92, y: 80 }, { x: 92, y: 160 }, 8, { destructible: false }));
+    const room = activeRoomWithLoadout(map, { classId: "breacher", weaponId: "assault" });
+    applyClientMessage(room, "p1", { type: "command", seq: 1, tick: room.tick, move: { x: 0, y: 0 }, aim: 0, fire: false, use: "none", ability: true });
+    stepRoom(room);
+    expect(room.map.walls.find((wall) => wall.id === "hard-wall")?.destroyed).toBe(true);
+
+    const boundsMap = testMap();
+    boundsMap.walls.push(createWall("west", "solid", { x: 0, y: 0 }, { x: 0, y: 240 }, 8, { destructible: false }));
+    const boundsRoom = activeRoomWithLoadout(boundsMap, { classId: "breacher", weaponId: "assault" });
+    applyClientMessage(boundsRoom, "p1", { type: "command", seq: 1, tick: boundsRoom.tick, move: { x: 0, y: 0 }, aim: Math.PI, fire: false, use: "none", ability: true });
+    stepRoom(boundsRoom);
+    expect(boundsRoom.map.walls.find((wall) => wall.id === "west")?.destroyed).not.toBe(true);
+    expect(snapshotFor(boundsRoom, "p1").actionResults.find((action) => action.seq === 1 && action.action === "ability")).toMatchObject({ accepted: false });
+  });
+
   it("queues in-game loadout changes and applies them on the next round", () => {
     const room = activeRoomWithLoadout(testMap(), { classId: "operator", weaponId: "assault" });
     applyClientMessage(room, "p1", { type: "loadout", loadout: { classId: "scout", weaponId: "shotgun" } });

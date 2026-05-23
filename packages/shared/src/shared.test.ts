@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { createSegmentFromPreset, createWall, deleteWallsById, hasLineOfSight, insertDoorGap, normalizeWallKind, parseMap, replaceWallSection, sampleMap, segmentPresetDefaults, slugifyMapName, validateDoorSwing, wallKindDefaults, weaponPresets } from "./index.js";
+import { createSegmentFromPreset, createWall, deleteWallsById, hasLineOfSight, insertDoorGap, normalizeWallKind, parseMap, playerClassPresets, replaceWallSection, sampleMap, segmentPresetDefaults, slugifyMapName, validateDoorSwing, wallKindDefaults, weaponPresets } from "./index.js";
 
 describe("shared tactical primitives", () => {
   it("validates the sample map", () => {
@@ -48,6 +48,13 @@ describe("shared tactical primitives", () => {
     expect(weaponPresets.shotgun.pelletCount).toBeGreaterThan(1);
     expect(weaponPresets.shotgun.spreadRadians).toBeGreaterThan((20 * Math.PI) / 180);
     expect(weaponPresets.sniper.effectiveRange).toBe(Number.POSITIVE_INFINITY);
+  });
+
+  it("defines class abilities for operator, scout, and breacher presets", () => {
+    expect(playerClassPresets.operator.ability.id).toBe("tactical-ping");
+    expect(playerClassPresets.scout.ability.id).toBe("dash");
+    expect(playerClassPresets.breacher.ability.id).toBe("breach-any");
+    expect(playerClassPresets.operator.ability.cooldownTicks).toBeGreaterThan(0);
   });
 
   it("normalizes legacy destructible wall kinds into a property", () => {
