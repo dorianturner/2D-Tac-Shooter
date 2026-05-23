@@ -1,6 +1,6 @@
 export const TICK_RATE = 60;
 export const TICK_MS = 1000 / TICK_RATE;
-export const PLAYER_WALK_SPEED = 165 / TICK_RATE;
+export const PLAYER_WALK_SPEED = 160 / TICK_RATE;
 export const PLAYER_RADIUS = 10;
 export const PLAYER_MAX_HP = 5;
 export const PLAYER_CLOSE_VISION_RADIUS = 80;

@@ -752,7 +752,7 @@ describe("authoritative simulation", () => {
     expect(soundDetections[0]!.radius).toBeGreaterThan(100);
   });
 
-  it("walk mode uses the old movement speed while running is faster", () => {
+  it("walk mode uses the configured walk speed while running is faster", () => {
     const runRoom = activeRoom(testMap());
     applyClientMessage(runRoom, "p1", { type: "command", seq: 1, tick: runRoom.tick, move: { x: 1, y: 0 }, aim: 0, fire: false, use: "none" });
     stepRoom(runRoom);
@@ -764,7 +764,7 @@ describe("authoritative simulation", () => {
     const walkDistance = walkRoom.players.p1.position.x - 50;
     expect(walkDistance).toBeLessThan(runDistance);
     expect(runDistance).toBeCloseTo(185 / 60, 3);
-    expect(walkDistance).toBeCloseTo(2.75, 3);
+    expect(walkDistance).toBeCloseTo(160 / 60, 3);
   });
 
   it("uses weapon movement speed presets while keeping walk speed stable", () => {
