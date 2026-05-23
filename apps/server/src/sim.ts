@@ -62,7 +62,6 @@ import {
   PLAYER_WALK_SPEED,
   PLAYER_MAX_HP,
   PLAYER_RADIUS,
-  PLAYER_SPEED,
   POST_GADGET_LOCKOUT_TICKS,
   RELOAD_TICKS,
   OBJECTIVE_CAPTURE_TICKS,
@@ -77,6 +76,7 @@ import {
   SOUND_SENSOR_RADIUS,
   SOUND_SENSOR_SPEED_THRESHOLD,
   SOUND_SENSOR_TRIGGER_TICKS,
+  TICK_RATE,
 } from "./sim/config.js";
 import { clampTarget, createDeployableWall, hasPlacementLineOfSight, isPlacementClear, resolveThrownTarget } from "./sim/deployables.js";
 import { hasConeLineOfSightWithSmoke, hasLineOfSightWithSmoke, visibleConePolygonWithSmoke } from "./sim/visibility.js";
@@ -407,7 +407,7 @@ export function stepRoom(room: RoomState): void {
     const input = slot.inputState;
     completeReload(player, room.tick);
     player.walking = Boolean(input.walk);
-    const speed = player.walking ? PLAYER_WALK_SPEED : PLAYER_SPEED;
+    const speed = player.walking ? PLAYER_WALK_SPEED : playerRunSpeed(player);
     const delta = { x: input.move.x * speed, y: input.move.y * speed };
     const desired = add(player.position, delta);
     collectDoorPushes(room, player.position, desired, delta);
@@ -433,6 +433,10 @@ export function stepRoom(room: RoomState): void {
   room.detections = room.detections.filter((detection) => detection.expiresAtTick >= room.tick);
   if (room.round.phase === "active" && room.tick >= room.round.endsAtTick) enterOvertimeOrDraw(room);
   if (room.round.phase === "overtime" && (room.round.overtimeEndsAtTick ?? 0) <= room.tick) finishRound(room, "draw", "timer");
+}
+
+function playerRunSpeed(player: PlayerState): number {
+  return createWeapon({ weaponId: player.weaponId }).moveSpeed / TICK_RATE;
 }
 
 function isPlayablePhase(phase: ServerSnapshot["round"]["phase"]): boolean {

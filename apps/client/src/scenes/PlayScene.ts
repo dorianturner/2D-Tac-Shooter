@@ -668,7 +668,7 @@ function loadoutDetailsHtml(loadout: PlayerLoadoutSelection): string {
     .join(" / ");
   return `
     <div><strong>${playerClass.name}</strong><span>Q ${playerClass.ability.name} | ${gadgets || "No gadgets"}</span></div>
-    <div><strong>${weapon.name}</strong><span>DMG ${weapon.damage} | RNG ${formatRange(weapon.effectiveRange)} | MAG ${weapon.magSize} | VISION ${weapon.visionRange}px / ${Math.round((weapon.visionFov * 180) / Math.PI)}deg${weapon.pelletCount > 1 ? ` | ${weapon.pelletCount} pellets` : ""}</span></div>
+    <div><strong>${weapon.name}</strong><span>DMG ${weapon.damage} | RNG ${formatRange(weapon.effectiveRange)} | MAG ${weapon.magSize} | SPD ${weapon.moveSpeed} | VISION ${weapon.visionRange}px / ${Math.round((weapon.visionFov * 180) / Math.PI)}deg${weapon.pelletCount > 1 ? ` | ${weapon.pelletCount} pellets` : ""}</span></div>
   `;
 }
 

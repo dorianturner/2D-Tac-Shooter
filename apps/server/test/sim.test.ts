@@ -342,7 +342,7 @@ describe("authoritative simulation", () => {
     door.b = { x: 210, y: 90 };
     openRoom.players.p1.position = { x: 130, y: 120 };
     applyClientMessage(openRoom, "p1", { type: "command", seq: 1, tick: openRoom.tick, move: { x: 1, y: 0 }, aim: 0, fire: false, use: "none" });
-    for (let i = 0; i < 6; i += 1) stepRoom(openRoom);
+    for (let i = 0; i < 8; i += 1) stepRoom(openRoom);
     expect(openRoom.players.p1.position.x).toBeGreaterThan(150);
 
     const mirroredMap = testMap();
@@ -355,7 +355,7 @@ describe("authoritative simulation", () => {
     mirroredDoor.b = { x: 90, y: 90 };
     mirroredRoom.players.p1.position = { x: 170, y: 120 };
     applyClientMessage(mirroredRoom, "p1", { type: "command", seq: 1, tick: mirroredRoom.tick, move: { x: -1, y: 0 }, aim: Math.PI, fire: false, use: "none" });
-    for (let i = 0; i < 6; i += 1) stepRoom(mirroredRoom);
+    for (let i = 0; i < 8; i += 1) stepRoom(mirroredRoom);
     expect(mirroredRoom.players.p1.position.x).toBeLessThan(150);
   });
 
@@ -763,8 +763,24 @@ describe("authoritative simulation", () => {
     stepRoom(walkRoom);
     const walkDistance = walkRoom.players.p1.position.x - 50;
     expect(walkDistance).toBeLessThan(runDistance);
-    expect(runDistance).toBeCloseTo(4, 3);
+    expect(runDistance).toBeCloseTo(185 / 60, 3);
     expect(walkDistance).toBeCloseTo(2.75, 3);
+  });
+
+  it("uses weapon movement speed presets while keeping walk speed stable", () => {
+    const sniperRoom = activeRoomWithLoadout(testMap(), { weaponId: "sniper" });
+    applyClientMessage(sniperRoom, "p1", { type: "command", seq: 1, tick: sniperRoom.tick, move: { x: 1, y: 0 }, aim: 0, fire: false, use: "none" });
+    stepRoom(sniperRoom);
+    const sniperDistance = sniperRoom.players.p1.position.x - 50;
+
+    const shotgunRoom = activeRoomWithLoadout(testMap(), { weaponId: "shotgun" });
+    applyClientMessage(shotgunRoom, "p1", { type: "command", seq: 1, tick: shotgunRoom.tick, move: { x: 1, y: 0 }, aim: 0, fire: false, use: "none" });
+    stepRoom(shotgunRoom);
+    const shotgunDistance = shotgunRoom.players.p1.position.x - 50;
+
+    expect(sniperDistance).toBeCloseTo(170 / 60, 3);
+    expect(shotgunDistance).toBeCloseTo(200 / 60, 3);
+    expect(sniperDistance).toBeLessThan(shotgunDistance);
   });
 
   it("sound sensors persist until destroyed by one bullet", () => {

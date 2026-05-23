@@ -48,6 +48,9 @@ describe("shared tactical primitives", () => {
     expect(weaponPresets.shotgun.pelletCount).toBeGreaterThan(1);
     expect(weaponPresets.shotgun.spreadRadians).toBeGreaterThan((20 * Math.PI) / 180);
     expect(weaponPresets.sniper.effectiveRange).toBe(Number.POSITIVE_INFINITY);
+    expect(weaponPresets.sniper.moveSpeed).toBeLessThan(weaponPresets.assault.moveSpeed);
+    expect(weaponPresets.assault.moveSpeed).toBeLessThan(weaponPresets.shotgun.moveSpeed);
+    expect(weaponPresets.shotgun.moveSpeed).toBe(200);
   });
 
   it("defines class abilities for operator, scout, and breacher presets", () => {

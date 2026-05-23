@@ -138,6 +138,7 @@ export interface WeaponDefinition {
   effectiveRange: number;
   fireCooldownTicks: number;
   magSize: number;
+  moveSpeed: number;
   visionRange: number;
   visionFov: number;
   pelletCount: number;
