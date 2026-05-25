@@ -4,6 +4,7 @@ import { listMaps, listRooms } from "../editorApi";
 import { mapSummaryToPickable, pickFromList } from "../fuzzyPicker";
 import { colors, drawDeployedCamera, drawFogOfWar, drawMap, drawMolotovZone, drawObjective, drawPlayer, drawSmokeZone, drawSoundSensorZone } from "../render";
 import { websocketUrl } from "../serverConfig";
+import { AudioDirector } from "../audioDirector";
 
 const GADGET_RANGES: Record<GadgetKind, number> = { camera: 180, molotov: 220, smoke: 220, wall: 180, sound: 180 };
 const GADGET_RADII: Record<Exclude<GadgetKind, "wall">, number> = { camera: 120, molotov: 55, smoke: 62, sound: 135 };
@@ -48,6 +49,7 @@ export class PlayScene extends Phaser.Scene {
   private refreshBar: HTMLElement | undefined = undefined;
   private selectedClass: PlayerClassPresetId = "operator";
   private selectedWeapon: WeaponPresetId = "assault";
+  private audio = new AudioDirector();
 
   constructor() {
     super("play");
@@ -59,7 +61,11 @@ export class PlayScene extends Phaser.Scene {
     this.mapLayer = this.add.graphics();
     this.entityLayer = this.add.graphics();
     this.keys = this.input.keyboard?.addKeys("W,A,S,D,E,Q,R,ESC,SHIFT,ONE,TWO,THREE,FOUR,FIVE") as Record<string, Phaser.Input.Keyboard.Key>;
-    this.input.on("pointerdown", (pointer: Phaser.Input.Pointer) => this.queueGadgetDeploy(pointer));
+    this.input.on("pointerdown", (pointer: Phaser.Input.Pointer) => {
+      void this.audio.unlock();
+      this.queueGadgetDeploy(pointer);
+    });
+    this.input.keyboard?.on("keydown", () => void this.audio.unlock());
     this.input.on("wheel", (_pointer: Phaser.Input.Pointer, _objects: unknown[], _dx: number, dy: number) => {
       if (this.selectedGadget !== "wall") return;
       this.wallAngle += (dy > 0 ? 1 : -1) * (Math.PI / 12);
@@ -67,6 +73,7 @@ export class PlayScene extends Phaser.Scene {
     this.createLobby();
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
       this.stopRoomRefresh();
+      this.audio.dispose();
       this.shell?.remove();
     });
   }
@@ -296,6 +303,7 @@ export class PlayScene extends Phaser.Scene {
       }
       this.snapshot = message;
       this.lastSnapshotAtMs = performance.now();
+      this.audio.playEvents(message.audibleEvents, message.self.position, message.playerId);
       this.updateLoadoutStatus(message);
       this.renderMap(message);
       this.renderSnapshot(message);

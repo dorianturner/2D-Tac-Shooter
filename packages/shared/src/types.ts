@@ -9,6 +9,7 @@ export type GadgetKind = "camera" | "molotov" | "smoke" | "wall" | "sound";
 export type WeaponPresetId = "assault" | "sniper" | "shotgun";
 export type PlayerClassPresetId = "operator" | "scout" | "breacher";
 export type ClassAbilityId = "tactical-ping" | "dash" | "breach-any";
+export type SoundEventKind = "gunshot" | "reload" | "footstep" | "gadget" | "ability" | "impact" | "door" | "round" | "damage";
 
 export interface Vec2 {
   x: number;
@@ -211,6 +212,20 @@ export interface ActionResult {
   reason?: "out-of-range" | "blocked-los" | "no-count" | "action-lockout" | "round-inactive" | "invalid";
 }
 
+export interface AudibleEvent {
+  id: string;
+  tick: number;
+  kind: SoundEventKind;
+  sourceId: string;
+  position: Vec2;
+  radius: number;
+  volume: number;
+  subtype?: string;
+  weaponId?: WeaponPresetId;
+  gadget?: GadgetKind;
+  abilityId?: ClassAbilityId;
+}
+
 export interface ServerSnapshot {
   type: "snapshot";
   tick: number;
@@ -235,6 +250,7 @@ export interface ServerSnapshot {
   visibleCircles: VisionCircle[];
   explored: Vec2[];
   actionResults: ActionResult[];
+  audibleEvents: AudibleEvent[];
   debug?: DebugTruth;
 }
 

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { createWall, distanceToSegment, type MapDefinition } from "@tac/shared";
 import { applyClientMessage, createRoom, isExpiredUnfilledLobby, joinRoom, refreshGeometryCaches, snapshotFor, stepRoom } from "../src/sim.js";
-import { MAX_ANALYTICS_EVENTS, MAX_REPLAY_COMMANDS, MAX_REPLAY_EVENTS, OBJECTIVE_CAPTURE_TICKS, ROUND_TICKS } from "../src/sim/config.js";
+import { MAX_ANALYTICS_EVENTS, MAX_REPLAY_COMMANDS, MAX_REPLAY_EVENTS, MAX_SOUND_EVENTS, OBJECTIVE_CAPTURE_TICKS, ROUND_TICKS, SOUND_EVENT_TTL_TICKS, SOUND_RADIUS_RUN_FOOTSTEP, SOUND_RADIUS_WALK_FOOTSTEP } from "../src/sim/config.js";
 
 describe("authoritative simulation", () => {
   it("filters hidden opponents out of snapshots", () => {
@@ -847,6 +847,64 @@ describe("authoritative simulation", () => {
     expect(room.round.winner).toBe("p1");
     expect(room.round.scores.p1).toBe(1);
     expect(room.replay.events.some((event) => event.type === "kill" && event.target === "p2")).toBe(true);
+  });
+
+  it("filters gunshot sound events by radius while allowing sound through walls", () => {
+    const map = testMap();
+    map.walls.push(createWall("sound-blocker", "solid", { x: 130, y: 60 }, { x: 130, y: 180 }, 8));
+    const room = activeRoom(map);
+    applyClientMessage(room, "p1", { type: "command", seq: 1, tick: room.tick, move: { x: 0, y: 0 }, aim: Math.PI / 2, fire: true, use: "none" });
+    stepRoom(room);
+    expect(snapshotFor(room, "p2").audibleEvents.some((event) => event.kind === "gunshot" && event.weaponId === "assault")).toBe(true);
+    expect(snapshotFor(room, "p2").visiblePlayers).toHaveLength(0);
+
+    const farMap = testMap();
+    farMap.bounds.width = 1200;
+    farMap.spawns[1]!.position = { x: 900, y: 120 };
+    const farRoom = activeRoom(farMap);
+    applyClientMessage(farRoom, "p1", { type: "command", seq: 1, tick: farRoom.tick, move: { x: 0, y: 0 }, aim: Math.PI / 2, fire: true, use: "none" });
+    stepRoom(farRoom);
+    expect(snapshotFor(farRoom, "p2").audibleEvents.some((event) => event.kind === "gunshot")).toBe(false);
+  });
+
+  it("emits quieter shorter-radius walking sounds than running sounds", () => {
+    const runRoom = activeRoom(testMap());
+    applyClientMessage(runRoom, "p1", { type: "command", seq: 1, tick: runRoom.tick, move: { x: 1, y: 0 }, aim: 0, fire: false, use: "none" });
+    stepRoom(runRoom);
+    const runStep = runRoom.soundEvents.find((event) => event.kind === "footstep")!;
+    expect(runStep.subtype).toBe("run");
+    expect(runStep.radius).toBe(SOUND_RADIUS_RUN_FOOTSTEP);
+
+    const walkRoom = activeRoom(testMap());
+    applyClientMessage(walkRoom, "p1", { type: "command", seq: 1, tick: walkRoom.tick, move: { x: 1, y: 0 }, aim: 0, fire: false, use: "none", walk: true });
+    stepRoom(walkRoom);
+    const walkStep = walkRoom.soundEvents.find((event) => event.kind === "footstep")!;
+    expect(walkStep.subtype).toBe("walk");
+    expect(walkStep.radius).toBe(SOUND_RADIUS_WALK_FOOTSTEP);
+    expect(walkStep.volume).toBeLessThan(runStep.volume);
+  });
+
+  it("emits gadget and ability sound events from accepted authoritative actions", () => {
+    const room = activeRoom(testMap());
+    applyClientMessage(room, "p1", { type: "command", seq: 1, tick: room.tick, move: { x: 0, y: 0 }, aim: 0, fire: false, use: "none", gadget: "camera", gadgetTarget: { x: 80, y: 80 } });
+    stepRoom(room);
+    expect(room.soundEvents).toContainEqual(expect.objectContaining({ kind: "gadget", gadget: "camera", sourceId: "p1" }));
+
+    applyClientMessage(room, "p1", { type: "command", seq: 2, tick: room.tick, move: { x: 0, y: 0 }, aim: 0, fire: false, use: "none", ability: true });
+    stepRoom(room);
+    expect(room.soundEvents).toContainEqual(expect.objectContaining({ kind: "ability", abilityId: "tactical-ping", sourceId: "p1" }));
+  });
+
+  it("bounds and prunes tactical sound events", () => {
+    const map = testMap();
+    map.bounds.width = 20_000;
+    map.spawns[0]!.position = { x: 50, y: 120 };
+    const room = activeRoom(map);
+    room.round.endsAtTick = room.tick + MAX_SOUND_EVENTS * 30;
+    applyClientMessage(room, "p1", { type: "command", seq: 1, tick: room.tick, move: { x: 1, y: 0 }, aim: 0, fire: false, use: "none" });
+    for (let i = 0; i < MAX_SOUND_EVENTS * 24; i += 1) stepRoom(room);
+    expect(room.soundEvents.length).toBeLessThanOrEqual(MAX_SOUND_EVENTS);
+    expect(room.soundEvents[0]!.tick).toBeGreaterThan(room.tick - SOUND_EVENT_TTL_TICKS - 1);
   });
 
   it("ends the match when a player wins two rounds", () => {

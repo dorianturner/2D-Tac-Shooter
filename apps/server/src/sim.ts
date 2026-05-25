@@ -18,6 +18,7 @@ import {
   segmentPreset,
   type AuthoritativeEvent,
   type ActionResult,
+  type AudibleEvent,
   type ClientMessage,
   type DeployedCamera,
   type Detection,
@@ -59,6 +60,7 @@ import {
   MAX_EXPLORED_POINTS,
   MAX_REPLAY_COMMANDS,
   MAX_REPLAY_EVENTS,
+  MAX_SOUND_EVENTS,
   MOLOTOV_DAMAGE_INTERVAL,
   MOLOTOV_RANGE,
   MOLOTOV_RADIUS,
@@ -82,7 +84,22 @@ import {
   SOUND_SENSOR_RADIUS,
   SOUND_SENSOR_SPEED_THRESHOLD,
   SOUND_SENSOR_TRIGGER_TICKS,
+  SOUND_EVENT_TTL_TICKS,
+  SOUND_RADIUS_ABILITY,
+  SOUND_RADIUS_ASSAULT,
+  SOUND_RADIUS_BREACH,
+  SOUND_RADIUS_DOOR,
+  SOUND_RADIUS_GADGET,
+  SOUND_RADIUS_IMPACT,
+  SOUND_RADIUS_RELOAD,
+  SOUND_RADIUS_ROUND,
+  SOUND_RADIUS_RUN_FOOTSTEP,
+  SOUND_RADIUS_SHOTGUN,
+  SOUND_RADIUS_SNIPER,
+  SOUND_RADIUS_WALK_FOOTSTEP,
+  RUN_FOOTSTEP_INTERVAL_TICKS,
   TICK_RATE,
+  WALK_FOOTSTEP_INTERVAL_TICKS,
 } from "./sim/config.js";
 import { clampTarget, createDeployableWall, hasPlacementLineOfSight, isPlacementClear, resolveThrownTarget } from "./sim/deployables.js";
 import { hasConeLineOfSightWithSmoke, hasLineOfSightWithSmoke, visibleConePolygonWithSmoke } from "./sim/visibility.js";
@@ -148,6 +165,7 @@ interface PlayerSlot {
   nextFireTick: number;
   nextActionTick: number;
   nextAbilityTick: number;
+  nextFootstepTick: number;
   weaponBloomRadians: number;
   shotsFired: number;
   lastSeenWalls: Map<string, Wall>;
@@ -181,6 +199,8 @@ export interface RoomState {
   scratch: RoomScratch;
   detections: Detection[];
   shotImpacts: ShotImpact[];
+  soundEvents: AudibleEvent[];
+  nextSoundEventId: number;
   deployedCameras: DeployedCamera[];
   molotovs: MolotovZone[];
   smokes: SmokeZone[];
@@ -243,6 +263,8 @@ export function createRoom(id: string, sourceMap: MapDefinition = sampleMap): Ro
     scratch: { desiredMovements: [] },
     detections: [],
     shotImpacts: [],
+    soundEvents: [],
+    nextSoundEventId: 0,
     deployedCameras: [],
     molotovs: [],
     smokes: [],
@@ -269,6 +291,7 @@ function createSlot(id: PlayerId): PlayerSlot {
     nextFireTick: 0,
     nextActionTick: 0,
     nextAbilityTick: 0,
+    nextFootstepTick: 0,
     weaponBloomRadians: 0,
     shotsFired: 0,
     lastSeenWalls: new Map(),
@@ -397,6 +420,7 @@ function processPendingActions(room: RoomState, player: PlayerState, slot: Playe
     const action = slot.pendingActions.shift()!;
     if (action.type === "reload") {
       const accepted = startReload(player, room.tick);
+      if (accepted) emitReloadSound(room, player, "start");
       recordActionResult(slot, action.seq, "reload", accepted, accepted ? undefined : "invalid");
       continue;
     }
@@ -429,6 +453,7 @@ function recordActionResult(slot: PlayerSlot, seq: number, action: ActionResult[
 export function stepRoom(room: RoomState): void {
   room.tick += 1;
   retainInPlace(room.shotImpacts, (impact) => impact.tick >= room.tick - 5);
+  retainInPlace(room.soundEvents, (event) => event.tick >= room.tick - SOUND_EVENT_TTL_TICKS);
   if (room.molotovs.length > 0) retainInPlace(room.molotovs, (zone) => zone.expiresAtTick >= room.tick);
   if (room.smokes.length > 0) retainInPlace(room.smokes, (zone) => zone.expiresAtTick >= room.tick);
   if (room.soundSensors.length > 0) retainInPlace(room.soundSensors, (zone) => !zone.destroyed);
@@ -444,6 +469,7 @@ export function stepRoom(room: RoomState): void {
     delete room.round.winner;
     delete room.round.reason;
     delete room.round.nextRoundStartsAtTick;
+    emitRoundSound(room, "start");
     pushEvent(room, { type: "round-start", tick: room.tick });
   }
   if (!isPlayablePhase(room.round.phase)) {
@@ -458,7 +484,7 @@ export function stepRoom(room: RoomState): void {
     if (!player.alive) continue;
     const slot = getSlot(room, player.id);
     const input = slot.inputState;
-    completeReload(player, room.tick);
+    if (completeReload(player, room.tick)) emitReloadSound(room, player, "complete");
     player.walking = Boolean(input.walk);
     const speed = player.walking ? PLAYER_WALK_SPEED : playerRunSpeed(player);
     const delta = { x: input.move.x * speed, y: input.move.y * speed };
@@ -473,6 +499,7 @@ export function stepRoom(room: RoomState): void {
     const next = movePlayerWithSweptCollision(room.map, player.position, desired, PLAYER_RADIUS, room.activeMovementWalls);
     player.velocity = { x: next.x - player.position.x, y: next.y - player.position.y };
     player.position = next;
+    emitFootstepSound(room, player, slot);
     processPendingActions(room, player, slot);
     if (input.fire && room.tick >= slot.nextActionTick) resolveShot(room, player.id);
     recoverWeaponBloom(player, slot);
@@ -497,6 +524,59 @@ function recoverWeaponBloom(player: PlayerState, slot: PlayerSlot): void {
   if (slot.weaponBloomRadians <= 0) return;
   const weapon = createWeapon({ weaponId: player.weaponId });
   slot.weaponBloomRadians = Math.max(0, slot.weaponBloomRadians - weapon.bloomRecoveryRadiansPerTick);
+}
+
+function emitFootstepSound(room: RoomState, player: PlayerState, slot: PlayerSlot): void {
+  const speed = Math.hypot(player.velocity.x, player.velocity.y);
+  if (speed < 0.35 || room.tick < slot.nextFootstepTick) return;
+  const walking = Boolean(player.walking);
+  slot.nextFootstepTick = room.tick + (walking ? WALK_FOOTSTEP_INTERVAL_TICKS : RUN_FOOTSTEP_INTERVAL_TICKS);
+  emitSound(room, {
+    kind: "footstep",
+    sourceId: player.id,
+    position: player.position,
+    radius: walking ? SOUND_RADIUS_WALK_FOOTSTEP : SOUND_RADIUS_RUN_FOOTSTEP,
+    volume: walking ? 0.28 : 0.62,
+    subtype: walking ? "walk" : "run"
+  });
+}
+
+function emitReloadSound(room: RoomState, player: PlayerState, subtype: "start" | "complete"): void {
+  emitSound(room, {
+    kind: "reload",
+    sourceId: player.id,
+    position: player.position,
+    radius: SOUND_RADIUS_RELOAD,
+    volume: subtype === "start" ? 0.5 : 0.38,
+    subtype,
+    weaponId: player.weaponId
+  });
+}
+
+function emitDoorSound(room: RoomState, door: Wall, subtype: string): void {
+  emitSound(room, {
+    kind: "door",
+    sourceId: door.id,
+    position: segmentMidpoint(door),
+    radius: SOUND_RADIUS_DOOR,
+    volume: subtype.includes("shot") ? 0.78 : 0.48,
+    subtype
+  });
+}
+
+function emitRoundSound(room: RoomState, subtype: string): void {
+  emitSound(room, {
+    kind: "round",
+    sourceId: room.id,
+    position: { x: room.map.bounds.width / 2, y: room.map.bounds.height / 2 },
+    radius: SOUND_RADIUS_ROUND,
+    volume: subtype === "start" ? 0.62 : 0.78,
+    subtype
+  });
+}
+
+function segmentMidpoint(wall: Wall): Vec2 {
+  return { x: (wall.a.x + wall.b.x) / 2, y: (wall.a.y + wall.b.y) / 2 };
 }
 
 function isPlayablePhase(phase: ServerSnapshot["round"]["phase"]): boolean {
@@ -583,6 +663,7 @@ function collectDoorPushes(room: RoomState, current: Vec2, desired: Vec2, delta:
     door.angularVelocity = clampDoorSpeed((door.angularVelocity ?? 0) + impulse);
     delete door.targetAngle;
     door.lastPushTick = room.tick;
+    if (room.tick % 18 === 0) emitDoorSound(room, door, "push");
   }
 }
 
@@ -761,11 +842,12 @@ function rotateDoorEndpoint(hinge: Vec2, closedB: Vec2, angle: number): Vec2 {
   return add(hinge, mul(angleToVector(base + angle), length));
 }
 
-function completeReload(player: PlayerState, tick: number): void {
-  if (!player.isReloading || player.reloadEndsAtTick === undefined || tick < player.reloadEndsAtTick) return;
+function completeReload(player: PlayerState, tick: number): boolean {
+  if (!player.isReloading || player.reloadEndsAtTick === undefined || tick < player.reloadEndsAtTick) return false;
   player.ammo = player.magSize;
   player.isReloading = false;
   delete player.reloadEndsAtTick;
+  return true;
 }
 
 function startReload(player: PlayerState, tick: number): boolean {
@@ -789,6 +871,7 @@ function toggleNearestDoor(room: RoomState, player: PlayerState): boolean {
   const currentAngle = door.currentAngle ?? 0;
   if (Math.abs(currentAngle) > DOOR_MAX_ANGLE * 0.45) {
     door.targetAngle = 0;
+    emitDoorSound(room, door, "toggle-close");
     return true;
   }
 
@@ -798,6 +881,7 @@ function toggleNearestDoor(room: RoomState, player: PlayerState): boolean {
   const side = cross(panel, playerOffset);
   const sign = Math.abs(side) > 0.001 ? -Math.sign(side) : Math.sign(Math.cos(player.aim)) || 1;
   door.targetAngle = sign * DOOR_MAX_ANGLE;
+  emitDoorSound(room, door, "toggle-open");
   return true;
 }
 
@@ -810,6 +894,15 @@ function activateClassAbility(room: RoomState, player: PlayerState, slot: Player
 
   slot.nextAbilityTick = room.tick + player.abilityCooldownTicks;
   player.abilityReadyAtTick = slot.nextAbilityTick;
+  emitSound(room, {
+    kind: "ability",
+    sourceId: player.id,
+    position: player.position,
+    radius: player.abilityId === "breach-any" ? SOUND_RADIUS_BREACH : SOUND_RADIUS_ABILITY,
+    volume: player.abilityId === "dash" ? 0.58 : 0.72,
+    subtype: player.abilityId,
+    abilityId: player.abilityId
+  });
   return { accepted: true };
 }
 
@@ -879,6 +972,14 @@ function destroyWallSegment(room: RoomState, wall: Wall, playerId: PlayerId): vo
   wall.hp = 0;
   wall.destroyed = true;
   getSlot(room, playerId).lastSeenWalls.set(wall.id, cloneWall(wall));
+  emitSound(room, {
+    kind: "impact",
+    sourceId: wall.id,
+    position: segmentMidpoint(wall),
+    radius: isHingedDoorSegment(wall) ? SOUND_RADIUS_DOOR * 1.7 : SOUND_RADIUS_BREACH,
+    volume: isHingedDoorSegment(wall) ? 0.82 : 0.74,
+    subtype: isHingedDoorSegment(wall) ? "door-break" : "destroy"
+  });
   pushEvent(room, { type: "wall-destroyed", tick: room.tick, wallId: wall.id, playerId });
   refreshGeometryCaches(room);
 }
@@ -893,6 +994,7 @@ const gadgetStrategies: Record<GadgetKind, GadgetStrategy> = {
       room.deployedCameras.push(camera);
       getSlot(room, player.id).lastSeenCameras.set(camera.id, cloneCamera(camera));
       pushEvent(room, { type: "camera-deployed", tick: room.tick, playerId: player.id, cameraId: camera.id });
+      emitGadgetSound(room, player, "camera", resolved.position);
       return { accepted: true };
     }
   },
@@ -904,6 +1006,7 @@ const gadgetStrategies: Record<GadgetKind, GadgetStrategy> = {
       const zone: MolotovZone = { id: `${player.id}-molotov-${room.tick}-${room.molotovs.length}`, owner: player.id, position: resolved.position, radius: MOLOTOV_RADIUS, createdAtTick: room.tick, expiresAtTick: room.tick + MOLOTOV_TICKS };
       room.molotovs.push(zone);
       pushEvent(room, { type: "molotov-deployed", tick: room.tick, playerId: player.id, molotovId: zone.id });
+      emitGadgetSound(room, player, "molotov", resolved.position);
       return { accepted: true };
     }
   },
@@ -915,6 +1018,7 @@ const gadgetStrategies: Record<GadgetKind, GadgetStrategy> = {
       const zone: SmokeZone = { id: `${player.id}-smoke-${room.tick}-${room.smokes.length}`, owner: player.id, position: resolved.position, radius: SMOKE_RADIUS, createdAtTick: room.tick, expiresAtTick: room.tick + SMOKE_TICKS };
       room.smokes.push(zone);
       pushEvent(room, { type: "smoke-deployed", tick: room.tick, playerId: player.id, smokeId: zone.id });
+      emitGadgetSound(room, player, "smoke", resolved.position);
       return { accepted: true };
     }
   },
@@ -928,6 +1032,7 @@ const gadgetStrategies: Record<GadgetKind, GadgetStrategy> = {
       refreshGeometryCaches(room);
       getSlot(room, player.id).lastSeenWalls.set(wall.id, cloneWall(wall));
       pushEvent(room, { type: "deployable-wall-deployed", tick: room.tick, playerId: player.id, wallId: wall.id });
+      emitGadgetSound(room, player, "wall", resolved.position);
       return { accepted: true };
     }
   },
@@ -939,6 +1044,7 @@ const gadgetStrategies: Record<GadgetKind, GadgetStrategy> = {
       const sensor: SoundSensorZone = { id: `${player.id}-sound-${room.tick}-${room.soundSensors.length}`, owner: player.id, position: resolved.position, radius: SOUND_SENSOR_RADIUS, hp: 1, createdAtTick: room.tick };
       room.soundSensors.push(sensor);
       pushEvent(room, { type: "sound-sensor-deployed", tick: room.tick, playerId: player.id, sensorId: sensor.id });
+      emitGadgetSound(room, player, "sound", resolved.position);
       return { accepted: true };
     }
   }
@@ -972,6 +1078,19 @@ function thrownDeployCheck(range: number): GadgetStrategy["canDeploy"] {
   };
 }
 
+function emitGadgetSound(room: RoomState, player: PlayerState, gadget: GadgetKind, position: Vec2): void {
+  const loud = gadget === "molotov" || gadget === "smoke" || gadget === "wall";
+  emitSound(room, {
+    kind: "gadget",
+    sourceId: player.id,
+    position,
+    radius: loud ? SOUND_RADIUS_GADGET : SOUND_RADIUS_GADGET * 0.72,
+    volume: loud ? 0.68 : 0.44,
+    subtype: gadget,
+    gadget
+  });
+}
+
 function resolveShot(room: RoomState, shooterId: PlayerId): void {
   const slot = getSlot(room, shooterId);
   if (room.tick < slot.nextFireTick) return;
@@ -981,12 +1100,21 @@ function resolveShot(room: RoomState, shooterId: PlayerId): void {
   completeReload(shooter, room.tick);
   if (shooter.isReloading) return;
   if (shooter.ammo <= 0) {
-    startReload(shooter, room.tick);
+    if (startReload(shooter, room.tick)) emitReloadSound(room, shooter, "start");
     return;
   }
   shooter.ammo -= 1;
   slot.nextFireTick = room.tick + weapon.fireCooldownTicks;
   const origin = { ...shooter.position };
+  emitSound(room, {
+    kind: "gunshot",
+    sourceId: shooterId,
+    position: origin,
+    radius: weaponSoundRadius(shooter.weaponId),
+    volume: shooter.weaponId === "sniper" ? 1 : shooter.weaponId === "shotgun" ? 0.86 : 0.72,
+    subtype: shooter.weaponId,
+    weaponId: shooter.weaponId
+  });
   const shotRange = Number.isFinite(weapon.effectiveRange) ? weapon.effectiveRange : maxMapShotRange(room.map);
   const hits: Array<ReturnType<typeof resolveHitscan>> = [];
   const shotIndex = slot.shotsFired;
@@ -1006,6 +1134,7 @@ function resolveShot(room: RoomState, shooterId: PlayerId): void {
       const target = getPlayer(room, hit.targetId);
       if (!target.alive) continue;
       target.hp = Math.max(0, target.hp - weapon.damage);
+      emitDamageSound(room, target, target.hp <= 0 ? "kill" : "hit");
       pushEvent(room, { type: "hit", tick: room.tick, shooter: shooterId, target: hit.targetId });
       if (target.hp <= 0) {
         target.alive = false;
@@ -1014,14 +1143,45 @@ function resolveShot(room: RoomState, shooterId: PlayerId): void {
         return;
       }
     } else if (hit.kind === "wall" && hit.wallId) {
+      emitImpactSound(room, hit.end, "wall");
       applyDoorShotImpulse(room, hit.wallId, origin, hit.end, weapon.damage);
       damageWall(room, hit.wallId, shooterId);
     } else if (hit.kind === "camera" && hit.cameraId) {
+      emitImpactSound(room, hit.end, "camera");
       damageCamera(room, hit.cameraId, shooterId);
     } else if (hit.kind === "sound-sensor" && hit.soundSensorId) {
+      emitImpactSound(room, hit.end, "sound-sensor");
       damageSoundSensor(room, hit.soundSensorId, shooterId);
     }
   }
+}
+
+function weaponSoundRadius(weaponId: PlayerState["weaponId"]): number {
+  if (weaponId === "sniper") return SOUND_RADIUS_SNIPER;
+  if (weaponId === "shotgun") return SOUND_RADIUS_SHOTGUN;
+  return SOUND_RADIUS_ASSAULT;
+}
+
+function emitImpactSound(room: RoomState, position: Vec2, subtype: string): void {
+  emitSound(room, {
+    kind: "impact",
+    sourceId: subtype,
+    position,
+    radius: SOUND_RADIUS_IMPACT,
+    volume: 0.4,
+    subtype
+  });
+}
+
+function emitDamageSound(room: RoomState, player: PlayerState, subtype: "hit" | "kill"): void {
+  emitSound(room, {
+    kind: "damage",
+    sourceId: player.id,
+    position: player.position,
+    radius: subtype === "kill" ? SOUND_RADIUS_IMPACT * 1.4 : SOUND_RADIUS_IMPACT,
+    volume: subtype === "kill" ? 0.72 : 0.46,
+    subtype
+  });
 }
 
 function maxMapShotRange(map: MapDefinition): number {
@@ -1046,6 +1206,7 @@ function applyDoorShotImpulse(room: RoomState, wallId: string, origin: Vec2, imp
   const baseTarget = door.targetAngle ?? door.currentAngle ?? 0;
   door.targetAngle = Math.max(-DOOR_MAX_ANGLE, Math.min(DOOR_MAX_ANGLE, baseTarget + sign * DOOR_MAX_ANGLE * hitScale));
   door.lastPushTick = room.tick;
+  emitDoorSound(room, door, "shot-impulse");
   return true;
 }
 
@@ -1122,6 +1283,7 @@ function damageCamera(room: RoomState, cameraId: string, shooterId: PlayerId): v
   if (!camera || camera.destroyed) return;
   camera.hp = 0;
   camera.destroyed = true;
+  emitImpactSound(room, camera.position, "camera-destroyed");
   getSlot(room, shooterId).lastSeenCameras.set(camera.id, cloneCamera(camera));
   getSlot(room, camera.owner).lastSeenCameras.set(camera.id, cloneCamera(camera));
   pushEvent(room, { type: "camera-destroyed", tick: room.tick, playerId: shooterId, cameraId: camera.id });
@@ -1132,6 +1294,7 @@ function damageSoundSensor(room: RoomState, sensorId: string, _shooterId: Player
   if (!sensor || sensor.destroyed) return;
   sensor.hp = 0;
   sensor.destroyed = true;
+  emitImpactSound(room, sensor.position, "sound-sensor-destroyed");
 }
 
 function enterOvertimeOrDraw(room: RoomState): void {
@@ -1149,6 +1312,7 @@ function enterOvertimeOrDraw(room: RoomState): void {
     progressTicks: 0,
     requiredTicks: OBJECTIVE_CAPTURE_TICKS
   };
+  emitRoundSound(room, "overtime");
 }
 
 function chooseOvertimeObjective(room: RoomState): ReturnType<typeof mapObjectives>[number] | undefined {
@@ -1189,6 +1353,7 @@ function finishRound(room: RoomState, winner: PlayerId | "draw", reason: "kill" 
   room.round.reason = reason;
   delete room.round.objective;
   delete room.round.overtimeEndsAtTick;
+  emitRoundSound(room, reason);
   pushEvent(room, { type: "round-end", tick: room.tick, winner, reason });
   if (winner !== "draw" && (room.round.scores[winner] ?? 0) >= 2) {
     room.round.phase = "ended";
@@ -1240,6 +1405,7 @@ function resetPlayersForRound(room: RoomState): void {
     slot.nextFireTick = room.tick;
     slot.nextActionTick = room.tick;
     slot.nextAbilityTick = room.tick;
+    slot.nextFootstepTick = room.tick;
     slot.weaponBloomRadians = 0;
     slot.shotsFired = 0;
     slot.lastSeenWalls.clear();
@@ -1375,6 +1541,7 @@ export function snapshotFor(room: RoomState, playerId: PlayerId): ServerSnapshot
   const visibleMolotovs = room.molotovs.filter((zone) => zone.owner === playerId || isPointVisibleToPlayer(room, self, zone.position));
   const visibleSmokes = room.smokes.filter((zone) => zone.owner === playerId || isPointVisibleToPlayer(room, self, zone.position));
   const visibleSoundSensors = room.soundSensors.filter((zone) => !zone.destroyed && (zone.owner === playerId || isPointVisibleToPlayer(room, self, zone.position)));
+  const audibleEvents = room.soundEvents.filter((event) => distance(self.position, event.position) <= event.radius).map(cloneAudibleEvent);
 
   const snapshot: ServerSnapshot = {
     type: "snapshot",
@@ -1394,7 +1561,8 @@ export function snapshotFor(room: RoomState, playerId: PlayerId): ServerSnapshot
       ...room.deployedCameras.filter((camera) => camera.owner === playerId && !camera.destroyed).map((camera) => ({ position: camera.position, radius: camera.radius }))
     ],
     explored: slot.explored,
-    actionResults: slot.actionResults.slice(-12)
+    actionResults: slot.actionResults.slice(-12),
+    audibleEvents
   };
 
   if (debug) {
@@ -1461,6 +1629,19 @@ function pushEvent(room: RoomState, event: AuthoritativeEvent): void {
   pushBounded(room.replay.events, event, MAX_REPLAY_EVENTS);
 }
 
+function emitSound(room: RoomState, event: Omit<AudibleEvent, "id" | "tick">): void {
+  pushBounded(
+    room.soundEvents,
+    {
+      id: `sound-${room.id}-${room.nextSoundEventId++}`,
+      tick: room.tick,
+      ...event,
+      position: { ...event.position }
+    },
+    MAX_SOUND_EVENTS
+  );
+}
+
 function clonePlayerState(player: PlayerState): PlayerState {
   return { ...player, position: { ...player.position }, velocity: { ...player.velocity }, gadgets: { ...player.gadgets }, gadgetLoadout: { ...player.gadgetLoadout } };
 }
@@ -1478,4 +1659,8 @@ function cloneWall(wall: Wall): Wall {
 
 function cloneCamera(camera: DeployedCamera): DeployedCamera {
   return { ...camera, position: { ...camera.position } };
+}
+
+function cloneAudibleEvent(event: AudibleEvent): AudibleEvent {
+  return { ...event, position: { ...event.position } };
 }
