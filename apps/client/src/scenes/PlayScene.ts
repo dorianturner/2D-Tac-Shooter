@@ -5,6 +5,7 @@ import { mapSummaryToPickable, pickFromList } from "../fuzzyPicker";
 import { colors, drawDeployedCamera, drawFogOfWar, drawMap, drawMolotovZone, drawObjective, drawPlayer, drawSmokeZone, drawSoundSensorZone } from "../render";
 import { websocketUrl } from "../serverConfig";
 import { AudioDirector } from "../audioDirector";
+import { PlaySpritePresenter, playImpactSprite, playMuzzleFlashSprite } from "../playSprites";
 
 const GADGET_RANGES: Record<GadgetKind, number> = { camera: 180, molotov: 220, smoke: 220, wall: 180, sound: 180 };
 const GADGET_RADII: Record<Exclude<GadgetKind, "wall">, number> = { camera: 120, molotov: 55, smoke: 62, sound: 135 };
@@ -12,7 +13,7 @@ const DEPLOYABLE_WALL_LENGTH = 36;
 const DEPLOYABLE_WALL_THICKNESS = 10;
 const ROOM_REFRESH_MS = 2000;
 const SERVER_TICK_MS = 1000 / TICK_RATE;
-const PLAY_CAMERA_ZOOM = 1.35;
+const PLAY_CAMERA_ZOOM = 1.15;
 
 interface GadgetPreviewTarget {
   position: Vec2;
@@ -31,6 +32,7 @@ export class PlayScene extends Phaser.Scene {
   private seq = 0;
   private mapLayer: Phaser.GameObjects.Graphics | undefined = undefined;
   private entityLayer: Phaser.GameObjects.Graphics | undefined = undefined;
+  private sprites: PlaySpritePresenter | undefined = undefined;
   private shell: HTMLElement | undefined = undefined;
   private hud: HTMLElement | undefined = undefined;
   private keys: Record<string, Phaser.Input.Keyboard.Key> | undefined = undefined;
@@ -50,6 +52,8 @@ export class PlayScene extends Phaser.Scene {
   private selectedClass: PlayerClassPresetId = "operator";
   private selectedWeapon: WeaponPresetId = "assault";
   private audio = new AudioDirector();
+  private playedShotFx = new Set<string>();
+  private playedShotFxOrder: string[] = [];
 
   constructor() {
     super("play");
@@ -60,6 +64,9 @@ export class PlayScene extends Phaser.Scene {
     this.cameras.main.setZoom(PLAY_CAMERA_ZOOM);
     this.mapLayer = this.add.graphics();
     this.entityLayer = this.add.graphics();
+    this.mapLayer.setDepth(0);
+    this.entityLayer.setDepth(30);
+    this.sprites = new PlaySpritePresenter(this);
     this.keys = this.input.keyboard?.addKeys("W,A,S,D,E,Q,R,ESC,SHIFT,ONE,TWO,THREE,FOUR,FIVE") as Record<string, Phaser.Input.Keyboard.Key>;
     this.input.on("pointerdown", (pointer: Phaser.Input.Pointer) => {
       void this.audio.unlock();
@@ -74,6 +81,8 @@ export class PlayScene extends Phaser.Scene {
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
       this.stopRoomRefresh();
       this.audio.dispose();
+      this.sprites?.clear();
+      this.clearPlayedShotFx();
       this.shell?.remove();
     });
   }
@@ -251,6 +260,8 @@ export class PlayScene extends Phaser.Scene {
     this.snapshot = undefined;
     this.welcome = undefined;
     this.renderedPlayers.clear();
+    this.sprites?.clear();
+    this.clearPlayedShotFx();
     this.rematchRequested = false;
     this.selectedGadget = "none";
     this.menuOpen = false;
@@ -284,6 +295,8 @@ export class PlayScene extends Phaser.Scene {
     if (message.type === "welcome") {
       this.welcome = message;
       this.renderedWalls.clear();
+      this.sprites?.clear();
+      this.clearPlayedShotFx();
       this.shell?.classList.add("in-game");
       this.updateMenuOpenClass();
       const roomHeader = this.shell?.querySelector<HTMLElement>(".room-header");
@@ -344,8 +357,9 @@ export class PlayScene extends Phaser.Scene {
     const players = [snapshot.self, ...snapshot.visiblePlayers];
     for (const player of players) {
       const rendered = this.smoothedPlayer(player);
-      drawPlayer(this.entityLayer, rendered.position, player.team === "blue" ? colors.blue : colors.orange, player.id === snapshot.playerId, rendered.aim);
+      if (!this.sprites) drawPlayer(this.entityLayer, rendered.position, player.team === "blue" ? colors.blue : colors.orange, player.id === snapshot.playerId, rendered.aim);
     }
+    this.sprites?.render(snapshot, this.renderedPlayers);
     this.updateMatchHud(snapshot);
   }
 
@@ -544,6 +558,26 @@ export class PlayScene extends Phaser.Scene {
     drawDottedLine(this.entityLayer, impact.origin, impact.end, impact.hit === "player" ? colors.warning : colors.destructible, alpha, 11, 5);
     this.entityLayer.fillStyle(impact.hit === "player" ? colors.warning : colors.destructible, alpha);
     this.entityLayer.fillCircle(impact.end.x, impact.end.y, impact.hit === "none" ? 2 : 4);
+    if (tick === impact.tick && this.claimShotFx(impact.id)) {
+      playMuzzleFlashSprite(this, impact.origin, Math.atan2(impact.end.y - impact.origin.y, impact.end.x - impact.origin.x));
+      if (impact.hit !== "none") playImpactSprite(this, impact.end);
+    }
+  }
+
+  private claimShotFx(id: string): boolean {
+    if (this.playedShotFx.has(id)) return false;
+    this.playedShotFx.add(id);
+    this.playedShotFxOrder.push(id);
+    while (this.playedShotFxOrder.length > 240) {
+      const stale = this.playedShotFxOrder.shift();
+      if (stale) this.playedShotFx.delete(stale);
+    }
+    return true;
+  }
+
+  private clearPlayedShotFx(): void {
+    this.playedShotFx.clear();
+    this.playedShotFxOrder = [];
   }
 
   private updateMatchHud(snapshot: ServerSnapshot): void {

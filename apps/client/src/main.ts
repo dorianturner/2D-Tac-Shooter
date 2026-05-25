@@ -3,9 +3,10 @@ import "./styles/main.css";
 import { EditorScene } from "./scenes/EditorScene";
 import { MenuScene } from "./scenes/MenuScene";
 import { PlayScene } from "./scenes/PlayScene";
+import { PreloadScene } from "./scenes/PreloadScene";
 
 const path = window.location.pathname;
-const scene = path.includes("editor") ? new EditorScene() : path.includes("play") ? new PlayScene() : new MenuScene();
+const routeScene = path.includes("editor") ? "editor" : path.includes("play") ? "play" : "menu";
 
 new Phaser.Game({
   type: Phaser.AUTO,
@@ -13,7 +14,7 @@ new Phaser.Game({
   width: window.innerWidth,
   height: window.innerHeight,
   backgroundColor: "#05070a",
-  scene,
+  scene: [new PreloadScene(routeScene), new MenuScene(), new PlayScene(), new EditorScene()],
   scale: {
     mode: Phaser.Scale.RESIZE,
     autoCenter: Phaser.Scale.CENTER_BOTH
