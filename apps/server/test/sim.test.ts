@@ -1081,17 +1081,48 @@ describe("authoritative simulation", () => {
     expect(sniperShotRoom.replay.events.some((event) => event.type === "kill" && event.shooter === "p1" && event.target === "p2")).toBe(true);
   });
 
-  it("destroys destructible solid walls after five shots and never destroys doors", () => {
+  it("destroys destructible solid walls and authored breakable doors after five shots", () => {
     const map = testMap();
     map.spawns[1]!.position = { x: 260, y: 180 };
     map.walls.push(createWall("panel", "solid", { x: 110, y: 80 }, { x: 110, y: 160 }, 8, { destructible: true }));
-    map.walls.push(createWall("door-target", "door", { x: 170, y: 80 }, { x: 170, y: 160 }, 8, { destructible: true }));
     const room = activeRoom(map);
     applyClientMessage(room, "p1", { type: "command", seq: 1, tick: room.tick, move: { x: 0, y: 0 }, aim: 0, fire: true, use: "none" });
     for (let i = 0; i < 31; i += 1) stepRoom(room);
     expect(room.map.walls.find((wall) => wall.id === "panel")?.destroyed).toBe(true);
-    for (let i = 0; i < 4; i += 1) stepRoom(room);
+
+    const doorMap = testMap();
+    doorMap.spawns[0]!.position = { x: 50, y: 80 };
+    doorMap.spawns[0]!.angle = 0;
+    doorMap.spawns[1]!.position = { x: 260, y: 200 };
+    doorMap.walls.push(createWall("door-target", "door", { x: 120, y: 80 }, { x: 120, y: 160 }, 8, { destructible: true }));
+    const doorRoom = activeRoom(doorMap);
+    applyClientMessage(doorRoom, "p1", { type: "command", seq: 1, tick: doorRoom.tick, move: { x: 0, y: 0 }, aim: 0, fire: true, use: "none" });
+    for (let i = 0; i < 31; i += 1) stepRoom(doorRoom);
+    expect(doorRoom.map.walls.find((wall) => wall.id === "door-target")?.destroyed).toBe(true);
+  });
+
+  it("keeps non-breakable doors intact when shot", () => {
+    const map = testMap();
+    map.spawns[1]!.position = { x: 260, y: 180 };
+    map.walls.push(createWall("door-target", "door", { x: 120, y: 80 }, { x: 120, y: 160 }, 8, { destructible: false }));
+    const room = activeRoom(map);
+    applyClientMessage(room, "p1", { type: "command", seq: 1, tick: room.tick, move: { x: 0, y: 0 }, aim: 0, fire: true, use: "none" });
+    for (let i = 0; i < 31; i += 1) stepRoom(room);
     expect(room.map.walls.find((wall) => wall.id === "door-target")?.destroyed).not.toBe(true);
+  });
+
+  it("applies deterministic assault rifle bloom during sustained fire", () => {
+    const map = testMap();
+    map.bounds.width = 900;
+    map.spawns[1]!.position = { x: 250, y: 220 };
+    const room = activeRoom(map);
+    applyClientMessage(room, "p1", { type: "command", seq: 1, tick: room.tick, move: { x: 0, y: 0 }, aim: 0, fire: true, use: "none" });
+    for (let i = 0; i < 28; i += 1) stepRoom(room);
+    const shotEvents = room.replay.events.filter((event) => event.type === "shot").map((event) => event.impact);
+    const yOffsets = shotEvents.map((impact) => Math.abs(impact.end.y - room.players.p1.position.y));
+    expect(shotEvents.length).toBeGreaterThanOrEqual(4);
+    expect(Math.max(...yOffsets.slice(1))).toBeGreaterThan(yOffsets[0] ?? 0);
+    expect(room.slots.p1.weaponBloomRadians).toBeGreaterThan(0);
   });
 
   it("uses authored destructible health for segment damage", () => {

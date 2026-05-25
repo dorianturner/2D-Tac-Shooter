@@ -12,7 +12,10 @@ export const weaponPresets: Record<WeaponPresetId, WeaponDefinition> = {
     visionRange: 260,
     visionFov: (100 * Math.PI) / 180,
     pelletCount: 1,
-    spreadRadians: 0
+    spreadRadians: (0.12 * Math.PI) / 180,
+    bloomPerShotRadians: (1.1 * Math.PI) / 180,
+    maxBloomRadians: (3.2 * Math.PI) / 180,
+    bloomRecoveryRadiansPerTick: (0.08 * Math.PI) / 180
   },
   sniper: {
     id: "sniper",
@@ -25,7 +28,10 @@ export const weaponPresets: Record<WeaponPresetId, WeaponDefinition> = {
     visionRange: 420,
     visionFov: (44 * Math.PI) / 180,
     pelletCount: 1,
-    spreadRadians: 0
+    spreadRadians: 0,
+    bloomPerShotRadians: 0,
+    maxBloomRadians: 0,
+    bloomRecoveryRadiansPerTick: 0
   },
   shotgun: {
     id: "shotgun",
@@ -38,7 +44,10 @@ export const weaponPresets: Record<WeaponPresetId, WeaponDefinition> = {
     visionRange: 260,
     visionFov: (100 * Math.PI) / 180,
     pelletCount: 7,
-    spreadRadians: (30 * Math.PI) / 180
+    spreadRadians: (30 * Math.PI) / 180,
+    bloomPerShotRadians: 0,
+    maxBloomRadians: 0,
+    bloomRecoveryRadiansPerTick: 0
   }
 };
 

@@ -148,6 +148,8 @@ interface PlayerSlot {
   nextFireTick: number;
   nextActionTick: number;
   nextAbilityTick: number;
+  weaponBloomRadians: number;
+  shotsFired: number;
   lastSeenWalls: Map<string, Wall>;
   lastSeenCameras: Map<string, DeployedCamera>;
 }
@@ -267,6 +269,8 @@ function createSlot(id: PlayerId): PlayerSlot {
     nextFireTick: 0,
     nextActionTick: 0,
     nextAbilityTick: 0,
+    weaponBloomRadians: 0,
+    shotsFired: 0,
     lastSeenWalls: new Map(),
     lastSeenCameras: new Map()
   };
@@ -471,6 +475,7 @@ export function stepRoom(room: RoomState): void {
     player.position = next;
     processPendingActions(room, player, slot);
     if (input.fire && room.tick >= slot.nextActionTick) resolveShot(room, player.id);
+    recoverWeaponBloom(player, slot);
     if (ENABLE_MATCH_ANALYTICS) pushBounded(room.analytics, { type: "movement-sample", tick: room.tick, data: { playerId: player.id, position: player.position } }, MAX_ANALYTICS_EVENTS);
   }
   resolvePlayerDoorOverlaps(room);
@@ -486,6 +491,12 @@ export function stepRoom(room: RoomState): void {
 
 function playerRunSpeed(player: PlayerState): number {
   return createWeapon({ weaponId: player.weaponId }).moveSpeed / TICK_RATE;
+}
+
+function recoverWeaponBloom(player: PlayerState, slot: PlayerSlot): void {
+  if (slot.weaponBloomRadians <= 0) return;
+  const weapon = createWeapon({ weaponId: player.weaponId });
+  slot.weaponBloomRadians = Math.max(0, slot.weaponBloomRadians - weapon.bloomRecoveryRadiansPerTick);
 }
 
 function isPlayablePhase(phase: ServerSnapshot["round"]["phase"]): boolean {
@@ -524,11 +535,12 @@ export function initializeRuntimeMap(map: MapDefinition): MapDefinition {
 }
 
 function initializeWallHp(wall: MapDefinition["walls"][number]): MapDefinition["walls"][number] {
-  if (!wall.destructible || isHingedDoorSegment(wall)) {
+  if (!wall.destructible) {
     const { hp: _hp, maxHp: _maxHp, ...runtimeWall } = wall;
     return runtimeWall;
   }
-  const maxHp = wall.maxHp ?? (segmentPreset(wall) === "mesh" || segmentPreset(wall) === "window" ? 1 : 5);
+  const preset = segmentPreset(wall);
+  const maxHp = wall.maxHp ?? (preset === "mesh" || preset === "window" ? 1 : 5);
   return { ...wall, maxHp, hp: wall.hp ?? maxHp };
 }
 
@@ -977,7 +989,9 @@ function resolveShot(room: RoomState, shooterId: PlayerId): void {
   const origin = { ...shooter.position };
   const shotRange = Number.isFinite(weapon.effectiveRange) ? weapon.effectiveRange : maxMapShotRange(room.map);
   const hits: Array<ReturnType<typeof resolveHitscan>> = [];
-  for (const angle of shotAngles(shooter.aim, weapon.pelletCount, weapon.spreadRadians)) {
+  const shotIndex = slot.shotsFired;
+  const currentSpread = weapon.spreadRadians + slot.weaponBloomRadians;
+  for (const angle of shotAngles(shooter.aim, weapon.pelletCount, currentSpread, room.replay.seed + room.tick, shotIndex, shooterId)) {
     const rayEnd = add(origin, mul(angleToVector(angle), shotRange));
     const hit = resolveHitscan(room, shooterId, origin, rayEnd, shotRange);
     hits.push(hit);
@@ -985,6 +999,8 @@ function resolveShot(room: RoomState, shooterId: PlayerId): void {
     room.shotImpacts.push(impact);
     pushEvent(room, { type: "shot", tick: room.tick, impact });
   }
+  slot.shotsFired += 1;
+  slot.weaponBloomRadians = Math.min(weapon.maxBloomRadians, slot.weaponBloomRadians + weapon.bloomPerShotRadians);
   for (const hit of hits) {
     if (hit.kind === "player" && hit.targetId) {
       const target = getPlayer(room, hit.targetId);
@@ -1033,11 +1049,19 @@ function applyDoorShotImpulse(room: RoomState, wallId: string, origin: Vec2, imp
   return true;
 }
 
-function shotAngles(aim: number, pelletCount: number, spreadRadians: number): number[] {
-  if (pelletCount <= 1 || spreadRadians <= 0) return [aim];
+function shotAngles(aim: number, pelletCount: number, spreadRadians: number, seed: number, shotIndex: number, shooterId: PlayerId): number[] {
+  if (spreadRadians <= 0) return [aim];
+  if (pelletCount <= 1) return [aim + deterministicSpreadOffset(seed, shotIndex, 0, shooterId, spreadRadians)];
   const step = spreadRadians / (pelletCount - 1);
   const start = aim - spreadRadians / 2;
   return Array.from({ length: pelletCount }, (_, index) => start + index * step);
+}
+
+function deterministicSpreadOffset(seed: number, shotIndex: number, pelletIndex: number, shooterId: PlayerId, spreadRadians: number): number {
+  const playerSeed = Number(shooterId.slice(1)) || 1;
+  const value = Math.sin(seed * 12.9898 + shotIndex * 78.233 + pelletIndex * 37.719 + playerSeed * 19.19) * 43758.5453;
+  const unit = value - Math.floor(value);
+  return (unit * 2 - 1) * (spreadRadians / 2);
 }
 
 function resolveHitscan(room: RoomState, shooterId: PlayerId, origin: Vec2, rayEnd: Vec2, maxRange = FIRE_RANGE): { kind: ShotImpact["hit"]; end: Vec2; targetId?: PlayerId; wallId?: string; cameraId?: string; soundSensorId?: string } {
@@ -1216,6 +1240,8 @@ function resetPlayersForRound(room: RoomState): void {
     slot.nextFireTick = room.tick;
     slot.nextActionTick = room.tick;
     slot.nextAbilityTick = room.tick;
+    slot.weaponBloomRadians = 0;
+    slot.shotsFired = 0;
     slot.lastSeenWalls.clear();
     slot.lastSeenCameras.clear();
   }
@@ -1231,6 +1257,8 @@ function applyPendingLoadout(player: PlayerState, slot: PlayerSlot): void {
   if (!slot.pendingLoadout) return;
   applyPlayerLoadout(player, slot.pendingLoadout);
   refillPlayerResources(player);
+  slot.weaponBloomRadians = 0;
+  slot.shotsFired = 0;
   delete slot.pendingLoadout;
 }
 

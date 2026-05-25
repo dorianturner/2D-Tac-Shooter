@@ -143,6 +143,9 @@ export interface WeaponDefinition {
   visionFov: number;
   pelletCount: number;
   spreadRadians: number;
+  bloomPerShotRadians: number;
+  maxBloomRadians: number;
+  bloomRecoveryRadiansPerTick: number;
 }
 
 export interface PlayerClassDefinition {

@@ -47,6 +47,9 @@ describe("shared tactical primitives", () => {
     expect(weaponPresets.shotgun.damage).toBe(1);
     expect(weaponPresets.shotgun.pelletCount).toBeGreaterThan(1);
     expect(weaponPresets.shotgun.spreadRadians).toBeGreaterThan((20 * Math.PI) / 180);
+    expect(weaponPresets.assault.bloomPerShotRadians).toBeGreaterThan(0);
+    expect(weaponPresets.assault.maxBloomRadians).toBeGreaterThan(weaponPresets.assault.bloomPerShotRadians);
+    expect(weaponPresets.assault.bloomRecoveryRadiansPerTick).toBeGreaterThan(0);
     expect(weaponPresets.sniper.effectiveRange).toBe(Number.POSITIVE_INFINITY);
     expect(weaponPresets.sniper.moveSpeed).toBeLessThan(weaponPresets.assault.moveSpeed);
     expect(weaponPresets.assault.moveSpeed).toBeLessThan(weaponPresets.shotgun.moveSpeed);

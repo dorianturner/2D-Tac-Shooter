@@ -1,6 +1,6 @@
 {
   "id": "rings",
-  "version": 4,
+  "version": 5,
   "name": "Rings",
   "bounds": {
     "width": 1440,
@@ -694,24 +694,6 @@
       "destructible": false
     },
     {
-      "id": "wall-41",
-      "preset": "wall",
-      "label": "wall",
-      "a": {
-        "x": 80,
-        "y": 320
-      },
-      "b": {
-        "x": 320,
-        "y": 320
-      },
-      "thickness": 12,
-      "blocksVision": true,
-      "blocksMovement": true,
-      "blocksShooting": true,
-      "destructible": false
-    },
-    {
       "id": "wall-42",
       "preset": "wall",
       "label": "wall",
@@ -722,24 +704,6 @@
       "b": {
         "x": 320,
         "y": 200
-      },
-      "thickness": 12,
-      "blocksVision": true,
-      "blocksMovement": true,
-      "blocksShooting": true,
-      "destructible": false
-    },
-    {
-      "id": "wall-43",
-      "preset": "wall",
-      "label": "wall",
-      "a": {
-        "x": 80,
-        "y": 600
-      },
-      "b": {
-        "x": 320,
-        "y": 600
       },
       "thickness": 12,
       "blocksVision": true,
@@ -914,24 +878,6 @@
       "destructible": false
     },
     {
-      "id": "wall-53",
-      "preset": "wall",
-      "label": "wall",
-      "a": {
-        "x": 1080,
-        "y": 320
-      },
-      "b": {
-        "x": 1320,
-        "y": 320
-      },
-      "thickness": 12,
-      "blocksVision": true,
-      "blocksMovement": true,
-      "blocksShooting": true,
-      "destructible": false
-    },
-    {
       "id": "wall-54",
       "preset": "wall",
       "label": "wall",
@@ -942,24 +888,6 @@
       "b": {
         "x": 1320,
         "y": 200
-      },
-      "thickness": 12,
-      "blocksVision": true,
-      "blocksMovement": true,
-      "blocksShooting": true,
-      "destructible": false
-    },
-    {
-      "id": "wall-55",
-      "preset": "wall",
-      "label": "wall",
-      "a": {
-        "x": 1080,
-        "y": 600
-      },
-      "b": {
-        "x": 1320,
-        "y": 600
       },
       "thickness": 12,
       "blocksVision": true,
@@ -1202,6 +1130,150 @@
       "thickness": 6,
       "blocksVision": false,
       "blocksMovement": false,
+      "blocksShooting": true,
+      "destructible": false
+    },
+    {
+      "id": "wall-64",
+      "preset": "wall",
+      "label": "wall",
+      "a": {
+        "x": 120,
+        "y": 320
+      },
+      "b": {
+        "x": 80,
+        "y": 320
+      },
+      "thickness": 12,
+      "blocksVision": true,
+      "blocksMovement": true,
+      "blocksShooting": true,
+      "destructible": false
+    },
+    {
+      "id": "wall-65",
+      "preset": "wall",
+      "label": "wall",
+      "a": {
+        "x": 280,
+        "y": 320
+      },
+      "b": {
+        "x": 320,
+        "y": 320
+      },
+      "thickness": 12,
+      "blocksVision": true,
+      "blocksMovement": true,
+      "blocksShooting": true,
+      "destructible": false
+    },
+    {
+      "id": "wall-66",
+      "preset": "wall",
+      "label": "wall",
+      "a": {
+        "x": 120,
+        "y": 600
+      },
+      "b": {
+        "x": 80,
+        "y": 600
+      },
+      "thickness": 12,
+      "blocksVision": true,
+      "blocksMovement": true,
+      "blocksShooting": true,
+      "destructible": false
+    },
+    {
+      "id": "wall-67",
+      "preset": "wall",
+      "label": "wall",
+      "a": {
+        "x": 280,
+        "y": 600
+      },
+      "b": {
+        "x": 320,
+        "y": 600
+      },
+      "thickness": 12,
+      "blocksVision": true,
+      "blocksMovement": true,
+      "blocksShooting": true,
+      "destructible": false
+    },
+    {
+      "id": "wall-68",
+      "preset": "wall",
+      "label": "wall",
+      "a": {
+        "x": 1120,
+        "y": 600
+      },
+      "b": {
+        "x": 1080,
+        "y": 600
+      },
+      "thickness": 12,
+      "blocksVision": true,
+      "blocksMovement": true,
+      "blocksShooting": true,
+      "destructible": false
+    },
+    {
+      "id": "wall-69",
+      "preset": "wall",
+      "label": "wall",
+      "a": {
+        "x": 1280,
+        "y": 600
+      },
+      "b": {
+        "x": 1320,
+        "y": 600
+      },
+      "thickness": 12,
+      "blocksVision": true,
+      "blocksMovement": true,
+      "blocksShooting": true,
+      "destructible": false
+    },
+    {
+      "id": "wall-70",
+      "preset": "wall",
+      "label": "wall",
+      "a": {
+        "x": 1120,
+        "y": 320
+      },
+      "b": {
+        "x": 1080,
+        "y": 320
+      },
+      "thickness": 12,
+      "blocksVision": true,
+      "blocksMovement": true,
+      "blocksShooting": true,
+      "destructible": false
+    },
+    {
+      "id": "wall-71",
+      "preset": "wall",
+      "label": "wall",
+      "a": {
+        "x": 1280,
+        "y": 320
+      },
+      "b": {
+        "x": 1320,
+        "y": 320
+      },
+      "thickness": 12,
+      "blocksVision": true,
+      "blocksMovement": true,
       "blocksShooting": true,
       "destructible": false
     }

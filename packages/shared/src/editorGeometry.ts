@@ -139,7 +139,7 @@ export function segmentBlocksShooting(wall: Wall): boolean {
 }
 
 export function isShootableDestructibleSegment(wall: Wall): boolean {
-  return !wall.destroyed && wall.destructible && !isHingedDoorSegment(wall);
+  return !wall.destroyed && wall.destructible;
 }
 
 export function deleteWallsById(walls: Wall[], ids: Set<string>): Wall[] {
