@@ -701,6 +701,7 @@ describe("authoritative simulation", () => {
     expect(room.molotovs).toHaveLength(1);
     for (let i = 0; i < 30; i += 1) stepRoom(room);
     expect(room.players.p2.hp).toBe(4);
+    expect(snapshotFor(room, "p2").audibleEvents).toContainEqual(expect.objectContaining({ kind: "damage", sourceId: "p2", subtype: "fire" }));
     for (let i = 0; i < 300; i += 1) stepRoom(room);
     expect(room.molotovs).toHaveLength(0);
   });

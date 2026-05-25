@@ -1173,13 +1173,13 @@ function emitImpactSound(room: RoomState, position: Vec2, subtype: string): void
   });
 }
 
-function emitDamageSound(room: RoomState, player: PlayerState, subtype: "hit" | "kill"): void {
+function emitDamageSound(room: RoomState, player: PlayerState, subtype: "hit" | "kill" | "fire"): void {
   emitSound(room, {
     kind: "damage",
     sourceId: player.id,
     position: player.position,
-    radius: subtype === "kill" ? SOUND_RADIUS_IMPACT * 1.4 : SOUND_RADIUS_IMPACT,
-    volume: subtype === "kill" ? 0.72 : 0.46,
+    radius: subtype === "kill" ? SOUND_RADIUS_IMPACT * 1.4 : subtype === "fire" ? SOUND_RADIUS_IMPACT * 1.15 : SOUND_RADIUS_IMPACT,
+    volume: subtype === "kill" ? 0.72 : subtype === "fire" ? 0.52 : 0.46,
     subtype
   });
 }
@@ -1458,6 +1458,7 @@ function resolveMolotovDamage(room: RoomState): void {
       if (!player.alive || distance(player.position, zone.position) > zone.radius) continue;
       if (!hasLineOfSightWithSmoke(room.map, [], zone.position, player.position, room.activeVisionWalls)) continue;
       player.hp = Math.max(0, player.hp - 1);
+      emitDamageSound(room, player, player.hp <= 0 ? "kill" : "fire");
       if (player.hp <= 0) {
         player.alive = false;
         pushEvent(room, { type: "kill", tick: room.tick, shooter: zone.owner, target: player.id });

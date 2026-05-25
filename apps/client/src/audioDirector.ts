@@ -53,7 +53,7 @@ export class AudioDirector {
     else if (event.kind === "impact") this.impact(event, gain, pan);
     else if (event.kind === "door") this.door(event, gain, pan);
     else if (event.kind === "round") this.round(event, gain);
-    else if (event.kind === "damage") this.damage(event, gain, pan);
+    else if (event.kind === "damage") this.damage(event, gain, pan, local);
   }
 
   private gunshot(event: AudibleEvent, gain: number, pan: number): void {
@@ -127,8 +127,25 @@ export class AudioDirector {
 
   private door(event: AudibleEvent, gain: number, pan: number): void {
     const shot = event.subtype?.includes("shot");
-    this.tone(shot ? 115 : 180, shot ? 0.11 : 0.18, gain * (shot ? 0.44 : 0.28), pan, "sawtooth");
-    this.noise(shot ? 0.08 : 0.11, gain * 0.22, pan, "bandpass", shot ? 520 : 280);
+    const toggle = event.subtype?.includes("toggle");
+    const push = event.subtype === "push";
+    if (shot) {
+      this.noise(0.08, gain * 0.42, pan, "bandpass", 520);
+      this.sweptTone(150, 82, 0.16, gain * 0.34, pan, "sawtooth");
+      return;
+    }
+    if (toggle) {
+      this.sweptTone(310, 145, 0.34, gain * 0.36, pan, "sawtooth");
+      this.sweptTone(92, 64, 0.18, gain * 0.28, pan, "triangle", this.context!.currentTime + 0.12);
+      this.noise(0.2, gain * 0.2, pan, "bandpass", 260);
+      return;
+    }
+    if (push) {
+      this.sweptTone(240, 170, 0.22, gain * 0.2, pan, "sawtooth");
+      this.noise(0.12, gain * 0.12, pan, "bandpass", 210);
+      return;
+    }
+    this.sweptTone(220, 120, 0.2, gain * 0.24, pan, "sawtooth");
   }
 
   private round(event: AudibleEvent, gain: number): void {
@@ -138,9 +155,13 @@ export class AudioDirector {
     this.tone(base * 1.5, 0.14, gain * 0.34, 0, "triangle", start + 0.12);
   }
 
-  private damage(event: AudibleEvent, gain: number, pan: number): void {
-    this.tone(event.subtype === "kill" ? 90 : 140, 0.09, gain * 0.38, pan, "sawtooth");
-    this.noise(0.05, gain * 0.25, pan, "lowpass", 460);
+  private damage(event: AudibleEvent, gain: number, pan: number, local: boolean): void {
+    const kill = event.subtype === "kill";
+    const fire = event.subtype === "fire";
+    const localBoost = local ? 1.8 : 1;
+    this.tone(kill ? 82 : fire ? 210 : 140, kill ? 0.16 : 0.105, gain * localBoost * (kill ? 0.5 : 0.44), pan, fire ? "triangle" : "sawtooth");
+    this.noise(fire ? 0.12 : 0.055, gain * localBoost * (fire ? 0.34 : 0.28), pan, fire ? "bandpass" : "lowpass", fire ? 720 : 460);
+    if (local) this.tone(58, 0.08, gain * 0.32, 0, "sine");
   }
 
   private tone(frequency: number, duration: number, gain: number, pan: number, type: OscillatorType, startAt = this.context!.currentTime): void {
@@ -156,6 +177,22 @@ export class AudioDirector {
     connectOutput(context, envelope, pan);
     oscillator.start(startAt);
     oscillator.stop(startAt + duration + 0.02);
+  }
+
+  private sweptTone(startFrequency: number, endFrequency: number, duration: number, gain: number, pan: number, type: OscillatorType, startAt = this.context!.currentTime): void {
+    const context = this.context!;
+    const oscillator = context.createOscillator();
+    const envelope = context.createGain();
+    oscillator.type = type;
+    oscillator.frequency.setValueAtTime(startFrequency, startAt);
+    oscillator.frequency.exponentialRampToValueAtTime(Math.max(1, endFrequency), startAt + duration);
+    envelope.gain.setValueAtTime(0.0001, startAt);
+    envelope.gain.exponentialRampToValueAtTime(Math.max(0.0001, gain), startAt + 0.014);
+    envelope.gain.exponentialRampToValueAtTime(0.0001, startAt + duration);
+    oscillator.connect(envelope);
+    connectOutput(context, envelope, pan);
+    oscillator.start(startAt);
+    oscillator.stop(startAt + duration + 0.03);
   }
 
   private noise(duration: number, gain: number, pan: number, filterType: BiquadFilterType, frequency: number): void {
