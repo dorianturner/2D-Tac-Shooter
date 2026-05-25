@@ -113,6 +113,10 @@ export class EditorScene extends Phaser.Scene {
     this.input.keyboard?.on("keydown-V", (event: KeyboardEvent) => {
       if (event.ctrlKey || event.metaKey) this.pasteClipboard();
     });
+    this.input.keyboard?.on("keydown-R", (event: KeyboardEvent) => {
+      if (event.ctrlKey || event.metaKey || event.altKey || isEditableTarget(event.target)) return;
+      this.rotateSelectionClockwise();
+    });
     this.redraw();
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
       this.game.canvas.removeEventListener("mousedown", this.preventMiddleMouse);
@@ -135,7 +139,7 @@ export class EditorScene extends Phaser.Scene {
         <div class="tool-grid"></div>
         <h2>Blueprints</h2>
         <div class="blueprint-panel"></div>
-        <p class="editor-hint">Wheel zooms. Middle-drag or Alt-drag pans. Shift-click adds to selection. Drag empty space to box-select. Delete removes selected geometry.</p>
+        <p class="editor-hint">Wheel zooms. Middle-drag or Alt-drag pans. Shift-click adds to selection. Drag selected items to move them together. R rotates selection clockwise. Delete removes selected geometry.</p>
       </aside>
       <aside class="editor-right">
         <h2>Map Settings</h2>
@@ -197,10 +201,8 @@ export class EditorScene extends Phaser.Scene {
     const spawn = this.pickSpawn(point);
     if (spawn) {
       this.recordUndo();
-      this.selectedIds.clear();
-      this.selectedSpawns = new Set([spawn.id]);
-      this.selectedObjectiveId = undefined;
-      this.drag = { type: "spawn", id: spawn.id };
+      this.updateSpawnSelection(spawn, pointer.event.shiftKey);
+      if (this.selectedSpawns.has(spawn.id)) this.drag = { type: "move", previous: point };
       this.renderChrome();
       this.redraw();
       return;
@@ -221,10 +223,8 @@ export class EditorScene extends Phaser.Scene {
     const objective = this.pickObjective(point);
     if (objective) {
       this.recordUndo();
-      this.selectedIds.clear();
-      this.selectedSpawns.clear();
-      this.selectedObjectiveId = objective.id;
-      this.drag = { type: "objective", id: objective.id };
+      this.updateObjectiveSelection(objective, pointer.event.shiftKey);
+      if (this.selectedObjectiveId === objective.id) this.drag = { type: "move", previous: point };
       this.renderChrome();
       this.redraw();
       return;
@@ -234,7 +234,7 @@ export class EditorScene extends Phaser.Scene {
     if (picked) {
       this.recordUndo();
       this.updateSelection(picked, pointer.event.shiftKey);
-      this.drag = { type: "move", previous: point };
+      if (this.selectedIds.has(picked.id)) this.drag = { type: "move", previous: point };
     } else {
       if (!pointer.event.shiftKey) this.selectedIds.clear();
       if (!pointer.event.shiftKey) this.selectedSpawns.clear();
@@ -352,7 +352,78 @@ export class EditorScene extends Phaser.Scene {
       if (!this.selectedIds.has(wall.id)) continue;
       wall.a = add(wall.a, delta);
       wall.b = add(wall.b, delta);
+      if (wall.hinge) wall.hinge = add(wall.hinge, delta);
+      if (wall.closedA) wall.closedA = add(wall.closedA, delta);
+      if (wall.closedB) wall.closedB = add(wall.closedB, delta);
     }
+    for (const spawn of this.map.spawns) {
+      if (this.selectedSpawns.has(spawn.id)) spawn.position = add(spawn.position, delta);
+    }
+    if (this.selectedObjectiveId) {
+      const objective = this.findObjective(this.selectedObjectiveId);
+      if (objective) {
+        objective.position = add(objective.position, delta);
+        this.syncPrimaryObjective();
+      }
+    }
+  }
+
+  private rotateSelectionClockwise(): void {
+    const center = this.selectionCenter();
+    if (!center) return;
+    this.recordUndo();
+    for (const wall of this.map.walls) {
+      if (!this.selectedIds.has(wall.id)) continue;
+      wall.a = rotateClockwiseAround(wall.a, center);
+      wall.b = rotateClockwiseAround(wall.b, center);
+      if (wall.hinge) wall.hinge = rotateClockwiseAround(wall.hinge, center);
+      if (wall.closedA) wall.closedA = rotateClockwiseAround(wall.closedA, center);
+      if (wall.closedB) wall.closedB = rotateClockwiseAround(wall.closedB, center);
+    }
+    for (const spawn of this.map.spawns) {
+      if (!this.selectedSpawns.has(spawn.id)) continue;
+      spawn.position = rotateClockwiseAround(spawn.position, center);
+      spawn.angle = normalizeAngle(spawn.angle + Math.PI / 2);
+    }
+    if (this.selectedObjectiveId) {
+      const objective = this.findObjective(this.selectedObjectiveId);
+      if (objective) {
+        objective.position = rotateClockwiseAround(objective.position, center);
+        this.syncPrimaryObjective();
+      }
+    }
+    this.setStatus("Rotated selection clockwise.");
+    this.redraw();
+    this.renderChrome();
+  }
+
+  private selectionCenter(): Vec2 | undefined {
+    const points: Vec2[] = [];
+    for (const wall of this.map.walls) {
+      if (!this.selectedIds.has(wall.id)) continue;
+      points.push(wall.a, wall.b);
+      if (wall.hinge) points.push(wall.hinge);
+      if (wall.closedA) points.push(wall.closedA);
+      if (wall.closedB) points.push(wall.closedB);
+    }
+    for (const spawn of this.map.spawns) {
+      if (this.selectedSpawns.has(spawn.id)) points.push(spawn.position);
+    }
+    if (this.selectedObjectiveId) {
+      const objective = this.findObjective(this.selectedObjectiveId);
+      if (objective) points.push(objective.position);
+    }
+    if (points.length === 0) return undefined;
+    const bounds = points.reduce(
+      (result, point) => ({
+        minX: Math.min(result.minX, point.x),
+        minY: Math.min(result.minY, point.y),
+        maxX: Math.max(result.maxX, point.x),
+        maxY: Math.max(result.maxY, point.y)
+      }),
+      { minX: Number.POSITIVE_INFINITY, minY: Number.POSITIVE_INFINITY, maxX: Number.NEGATIVE_INFINITY, maxY: Number.NEGATIVE_INFINITY }
+    );
+    return { x: (bounds.minX + bounds.maxX) / 2, y: (bounds.minY + bounds.maxY) / 2 };
   }
 
   private placeSpawn(id: PlayerId, position: Vec2, select = true): void {
@@ -792,11 +863,34 @@ export class EditorScene extends Phaser.Scene {
   }
 
   private updateSelection(wall: Wall, additive: boolean): void {
-    if (!additive) this.selectedIds.clear();
-    if (!additive) this.selectedSpawns.clear();
-    if (!additive) this.selectedObjectiveId = undefined;
+    const preserveGroup = !additive && this.selectedIds.has(wall.id) && this.selectionSize() > 1;
+    if (!additive && !preserveGroup) this.selectedIds.clear();
+    if (!additive && !preserveGroup) this.selectedSpawns.clear();
+    if (!additive && !preserveGroup) this.selectedObjectiveId = undefined;
     if (additive && this.selectedIds.has(wall.id)) this.selectedIds.delete(wall.id);
     else this.selectedIds.add(wall.id);
+  }
+
+  private updateSpawnSelection(spawn: Spawn, additive: boolean): void {
+    const preserveGroup = !additive && this.selectedSpawns.has(spawn.id) && this.selectionSize() > 1;
+    if (!additive && !preserveGroup) this.selectedIds.clear();
+    if (!additive && !preserveGroup) this.selectedSpawns.clear();
+    if (!additive && !preserveGroup) this.selectedObjectiveId = undefined;
+    if (additive && this.selectedSpawns.has(spawn.id)) this.selectedSpawns.delete(spawn.id);
+    else this.selectedSpawns.add(spawn.id);
+  }
+
+  private updateObjectiveSelection(objective: ObjectiveDefinition, additive: boolean): void {
+    const preserveGroup = !additive && this.selectedObjectiveId === objective.id && this.selectionSize() > 1;
+    if (!additive && !preserveGroup) this.selectedIds.clear();
+    if (!additive && !preserveGroup) this.selectedSpawns.clear();
+    if (!additive && !preserveGroup) this.selectedObjectiveId = undefined;
+    if (additive && this.selectedObjectiveId === objective.id) this.selectedObjectiveId = undefined;
+    else this.selectedObjectiveId = objective.id;
+  }
+
+  private selectionSize(): number {
+    return this.selectedIds.size + this.selectedSpawns.size + (this.selectedObjectiveId ? 1 : 0);
   }
 
   private selectWallsInRect(a: Vec2, b: Vec2, additive: boolean): void {
@@ -807,6 +901,12 @@ export class EditorScene extends Phaser.Scene {
     if (!additive) this.selectedObjectiveId = undefined;
     for (const wall of this.map.walls) {
       if (wallIntersectsRect(wall, min, max)) this.selectedIds.add(wall.id);
+    }
+    for (const spawn of this.map.spawns) {
+      if (pointInRect(spawn.position, min, max)) this.selectedSpawns.add(spawn.id);
+    }
+    for (const objective of this.objectives()) {
+      if (circleIntersectsRect(objective.position, objective.radius, min, max)) this.selectedObjectiveId = objective.id;
     }
   }
 
@@ -1052,6 +1152,10 @@ function isAltLeftMouse(event: MouseEvent | TouchEvent | WheelEvent): event is M
   return "button" in event && event.button === 0 && event.altKey;
 }
 
+function isEditableTarget(target: EventTarget | null): boolean {
+  return target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement || target instanceof HTMLSelectElement || target instanceof HTMLButtonElement;
+}
+
 function createBlankMap(): MapDefinition {
   return normalizeMap({
     id: "untitled-map",
@@ -1248,6 +1352,30 @@ function applySpawnField(spawn: Spawn, field: string, raw: string | boolean): vo
   if (!parent || !child) return;
   const nested = (spawn as unknown as Record<string, Record<string, number>>)[parent];
   if (nested) nested[child] = Number(value);
+}
+
+function rotateClockwiseAround(point: Vec2, center: Vec2): Vec2 {
+  const dx = point.x - center.x;
+  const dy = point.y - center.y;
+  return roundVec({ x: center.x - dy, y: center.y + dx });
+}
+
+function roundVec(point: Vec2): Vec2 {
+  return { x: Math.round(point.x * 1000) / 1000, y: Math.round(point.y * 1000) / 1000 };
+}
+
+function normalizeAngle(angle: number): number {
+  const fullTurn = Math.PI * 2;
+  return ((angle % fullTurn) + fullTurn) % fullTurn;
+}
+
+function pointInRect(point: Vec2, min: Vec2, max: Vec2): boolean {
+  return point.x >= min.x && point.x <= max.x && point.y >= min.y && point.y <= max.y;
+}
+
+function circleIntersectsRect(center: Vec2, radius: number, min: Vec2, max: Vec2): boolean {
+  const closest = { x: Phaser.Math.Clamp(center.x, min.x, max.x), y: Phaser.Math.Clamp(center.y, min.y, max.y) };
+  return distance(center, closest) <= radius;
 }
 
 function drawDashedLine(g: Phaser.GameObjects.Graphics, a: Vec2, b: Vec2, dashLength: number, gapLength: number): void {
