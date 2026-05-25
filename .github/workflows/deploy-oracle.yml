@@ -65,17 +65,17 @@ jobs:
           touch ~/.ssh/known_hosts
           chmod 600 ~/.ssh/known_hosts
 
-          cat > ~/.ssh/config <<EOF
-Host oracle
-  HostName ${ORACLE_HOST}
-  User ${ORACLE_USER}
-  Port ${ORACLE_PORT}
-  IdentityFile ~/.ssh/oracle
-  StrictHostKeyChecking accept-new
-  UserKnownHostsFile ~/.ssh/known_hosts
-  ServerAliveInterval 30
-  ServerAliveCountMax 3
-EOF
+          {
+            printf '%s\n' 'Host oracle'
+            printf '  HostName %s\n' "${ORACLE_HOST}"
+            printf '  User %s\n' "${ORACLE_USER}"
+            printf '  Port %s\n' "${ORACLE_PORT}"
+            printf '%s\n' '  IdentityFile ~/.ssh/oracle'
+            printf '%s\n' '  StrictHostKeyChecking accept-new'
+            printf '%s\n' '  UserKnownHostsFile ~/.ssh/known_hosts'
+            printf '%s\n' '  ServerAliveInterval 30'
+            printf '%s\n' '  ServerAliveCountMax 3'
+          } > ~/.ssh/config
           chmod 600 ~/.ssh/config
 
           for attempt in 1 2 3 4 5; do
