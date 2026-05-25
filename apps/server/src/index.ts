@@ -13,6 +13,7 @@ const clientDist = resolve(process.cwd(), "apps/client/dist");
 const rooms = new Map<string, RoomState>();
 const sockets = new Map<WebSocket, { roomId: string; playerId: PlayerId }>();
 const reconnect = new Map<string, { roomId: string; playerId: PlayerId }>();
+let simulationTimer: ReturnType<typeof setInterval> | undefined;
 
 const server = createServer((request, response) => {
   void handleHttp(request, response);
@@ -49,7 +50,18 @@ wss.on("connection", (socket) => {
   });
 });
 
-setInterval(() => {
+function startSimulationLoop(): void {
+  if (simulationTimer) return;
+  simulationTimer = setInterval(runSimulationTick, TICK_MS);
+}
+
+function stopSimulationLoopIfIdle(): void {
+  if (!simulationTimer || rooms.size > 0) return;
+  clearInterval(simulationTimer);
+  simulationTimer = undefined;
+}
+
+function runSimulationTick(): void {
   cleanupExpiredRooms();
   for (const room of rooms.values()) {
     stepRoom(room);
@@ -60,7 +72,8 @@ setInterval(() => {
     if (!room || socket.readyState !== socket.OPEN) continue;
     send(socket, snapshotFor(room, session.playerId));
   }
-}, TICK_MS);
+  stopSimulationLoopIfIdle();
+}
 
 server.listen(PORT, () => {
   console.log(`Authoritative tactical server listening on ws://localhost:${PORT}`);
@@ -211,6 +224,7 @@ async function handleHello(socket: WebSocket, hello: ClientHello): Promise<void>
 function createAndStoreRoom(roomId: string, map?: Parameters<typeof createRoom>[1]): RoomState {
   const room = createRoom(roomId, map);
   rooms.set(roomId, room);
+  startSimulationLoop();
   return room;
 }
 

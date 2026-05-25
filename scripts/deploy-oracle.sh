@@ -29,7 +29,7 @@ mkdir -p "${RELEASE_DIR}"
 tar -xzf "${ARCHIVE}" -C "${RELEASE_DIR}"
 
 cd "${RELEASE_DIR}"
-npm install --omit=dev --no-audit --no-fund
+npm install --omit=dev --no-audit --no-fund --ignore-scripts
 if [ ! -f apps/client/dist/index.html ]; then
   echo "Missing apps/client/dist/index.html. Build before packaging the release." >&2
   exit 1
@@ -43,4 +43,14 @@ sudo systemctl enable "${SERVICE_NAME}"
 ln -sfn "${RELEASE_DIR}" "${APP_DIR}/current"
 
 sudo systemctl restart "${SERVICE_NAME}"
-sudo systemctl --no-pager --lines=80 status "${SERVICE_NAME}"
+for attempt in $(seq 1 20); do
+  if curl -fsS --max-time 3 http://127.0.0.1/api/health >/dev/null; then
+    sudo systemctl --no-pager --lines=40 status "${SERVICE_NAME}"
+    exit 0
+  fi
+  sleep 1
+done
+
+sudo systemctl --no-pager --lines=120 status "${SERVICE_NAME}" || true
+sudo journalctl -u "${SERVICE_NAME}" --no-pager -n 120 || true
+exit 1
