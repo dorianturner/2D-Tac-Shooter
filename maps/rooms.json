@@ -1,0 +1,1291 @@
+{
+  "id": "rooms",
+  "version": 3,
+  "name": "rooms",
+  "bounds": {
+    "width": 720,
+    "height": 720
+  },
+  "gridSize": 40,
+  "rooms": [],
+  "walls": [
+    {
+      "id": "room-1-north",
+      "preset": "wall",
+      "label": "room-1",
+      "roomId": "room-1",
+      "a": {
+        "x": 0,
+        "y": 0
+      },
+      "b": {
+        "x": 240,
+        "y": 0
+      },
+      "thickness": 12,
+      "blocksVision": true,
+      "blocksMovement": true,
+      "blocksShooting": true,
+      "destructible": false
+    },
+    {
+      "id": "room-1-west",
+      "preset": "wall",
+      "label": "room-1",
+      "roomId": "room-1",
+      "a": {
+        "x": 0,
+        "y": 240
+      },
+      "b": {
+        "x": 0,
+        "y": 0
+      },
+      "thickness": 12,
+      "blocksVision": true,
+      "blocksMovement": true,
+      "blocksShooting": true,
+      "destructible": false
+    },
+    {
+      "id": "room-5-north",
+      "preset": "wall",
+      "label": "room-5",
+      "roomId": "room-5",
+      "a": {
+        "x": 240,
+        "y": 0
+      },
+      "b": {
+        "x": 480,
+        "y": 0
+      },
+      "thickness": 12,
+      "blocksVision": true,
+      "blocksMovement": true,
+      "blocksShooting": true,
+      "destructible": false
+    },
+    {
+      "id": "room-9-north",
+      "preset": "wall",
+      "label": "room-9",
+      "roomId": "room-9",
+      "a": {
+        "x": 480,
+        "y": 0
+      },
+      "b": {
+        "x": 720,
+        "y": 0
+      },
+      "thickness": 12,
+      "blocksVision": true,
+      "blocksMovement": true,
+      "blocksShooting": true,
+      "destructible": false
+    },
+    {
+      "id": "room-9-east",
+      "preset": "wall",
+      "label": "room-9",
+      "roomId": "room-9",
+      "a": {
+        "x": 720,
+        "y": 0
+      },
+      "b": {
+        "x": 720,
+        "y": 240
+      },
+      "thickness": 12,
+      "blocksVision": true,
+      "blocksMovement": true,
+      "blocksShooting": true,
+      "destructible": false
+    },
+    {
+      "id": "wall-14",
+      "preset": "wall",
+      "label": "room-1",
+      "roomId": "room-1-copy",
+      "a": {
+        "x": 0,
+        "y": 480
+      },
+      "b": {
+        "x": 0,
+        "y": 240
+      },
+      "thickness": 12,
+      "blocksVision": true,
+      "blocksMovement": true,
+      "blocksShooting": true,
+      "destructible": false
+    },
+    {
+      "id": "wall-19",
+      "preset": "wall",
+      "label": "room-9",
+      "roomId": "room-9-copy",
+      "a": {
+        "x": 720,
+        "y": 240
+      },
+      "b": {
+        "x": 720,
+        "y": 480
+      },
+      "thickness": 12,
+      "blocksVision": true,
+      "blocksMovement": true,
+      "blocksShooting": true,
+      "destructible": false
+    },
+    {
+      "id": "wall-23",
+      "preset": "wall",
+      "label": "room-1",
+      "roomId": "room-1-copy",
+      "a": {
+        "x": 240,
+        "y": 720
+      },
+      "b": {
+        "x": 0,
+        "y": 720
+      },
+      "thickness": 12,
+      "blocksVision": true,
+      "blocksMovement": true,
+      "blocksShooting": true,
+      "destructible": false
+    },
+    {
+      "id": "wall-24",
+      "preset": "wall",
+      "label": "room-1",
+      "roomId": "room-1-copy",
+      "a": {
+        "x": 0,
+        "y": 720
+      },
+      "b": {
+        "x": 0,
+        "y": 480
+      },
+      "thickness": 12,
+      "blocksVision": true,
+      "blocksMovement": true,
+      "blocksShooting": true,
+      "destructible": false
+    },
+    {
+      "id": "wall-27",
+      "preset": "wall",
+      "label": "room-5",
+      "roomId": "room-5-copy",
+      "a": {
+        "x": 480,
+        "y": 720
+      },
+      "b": {
+        "x": 240,
+        "y": 720
+      },
+      "thickness": 12,
+      "blocksVision": true,
+      "blocksMovement": true,
+      "blocksShooting": true,
+      "destructible": false
+    },
+    {
+      "id": "wall-29",
+      "preset": "wall",
+      "label": "room-9",
+      "roomId": "room-9-copy",
+      "a": {
+        "x": 720,
+        "y": 480
+      },
+      "b": {
+        "x": 720,
+        "y": 720
+      },
+      "thickness": 12,
+      "blocksVision": true,
+      "blocksMovement": true,
+      "blocksShooting": true,
+      "destructible": false
+    },
+    {
+      "id": "wall-30",
+      "preset": "wall",
+      "label": "room-9",
+      "roomId": "room-9-copy",
+      "a": {
+        "x": 720,
+        "y": 720
+      },
+      "b": {
+        "x": 480,
+        "y": 720
+      },
+      "thickness": 12,
+      "blocksVision": true,
+      "blocksMovement": true,
+      "blocksShooting": true,
+      "destructible": false
+    },
+    {
+      "id": "door-25-left",
+      "preset": "wall",
+      "label": "room-1",
+      "roomId": "room-1-copy",
+      "a": {
+        "x": 240,
+        "y": 480
+      },
+      "b": {
+        "x": 152,
+        "y": 480
+      },
+      "thickness": 12,
+      "blocksVision": true,
+      "blocksMovement": true,
+      "blocksShooting": true,
+      "destructible": false
+    },
+    {
+      "id": "door-25-right",
+      "preset": "wall",
+      "label": "room-1",
+      "roomId": "room-1-copy",
+      "a": {
+        "x": 88,
+        "y": 480
+      },
+      "b": {
+        "x": 0,
+        "y": 480
+      },
+      "thickness": 12,
+      "blocksVision": true,
+      "blocksMovement": true,
+      "blocksShooting": true,
+      "destructible": false
+    },
+    {
+      "id": "door-25-door",
+      "preset": "door",
+      "label": "DOOR",
+      "a": {
+        "x": 88,
+        "y": 480
+      },
+      "b": {
+        "x": 152,
+        "y": 480
+      },
+      "thickness": 6,
+      "blocksVision": false,
+      "blocksMovement": false,
+      "blocksShooting": true,
+      "destructible": false
+    },
+    {
+      "id": "door-27-left",
+      "preset": "wall",
+      "label": "room-1",
+      "roomId": "room-1-copy",
+      "a": {
+        "x": 240,
+        "y": 480
+      },
+      "b": {
+        "x": 240,
+        "y": 568
+      },
+      "thickness": 12,
+      "blocksVision": true,
+      "blocksMovement": true,
+      "blocksShooting": true,
+      "destructible": false
+    },
+    {
+      "id": "door-27-right",
+      "preset": "wall",
+      "label": "room-1",
+      "roomId": "room-1-copy",
+      "a": {
+        "x": 240,
+        "y": 632
+      },
+      "b": {
+        "x": 240,
+        "y": 720
+      },
+      "thickness": 12,
+      "blocksVision": true,
+      "blocksMovement": true,
+      "blocksShooting": true,
+      "destructible": false
+    },
+    {
+      "id": "door-27-door",
+      "preset": "door",
+      "label": "DOOR",
+      "a": {
+        "x": 240,
+        "y": 632
+      },
+      "b": {
+        "x": 240,
+        "y": 568
+      },
+      "thickness": 6,
+      "blocksVision": false,
+      "blocksMovement": false,
+      "blocksShooting": true,
+      "destructible": false
+    },
+    {
+      "id": "door-29-left",
+      "preset": "wall",
+      "label": "room-5",
+      "roomId": "room-5-copy",
+      "a": {
+        "x": 480,
+        "y": 480
+      },
+      "b": {
+        "x": 480,
+        "y": 568
+      },
+      "thickness": 12,
+      "blocksVision": true,
+      "blocksMovement": true,
+      "blocksShooting": true,
+      "destructible": false
+    },
+    {
+      "id": "door-29-right",
+      "preset": "wall",
+      "label": "room-5",
+      "roomId": "room-5-copy",
+      "a": {
+        "x": 480,
+        "y": 632
+      },
+      "b": {
+        "x": 480,
+        "y": 720
+      },
+      "thickness": 12,
+      "blocksVision": true,
+      "blocksMovement": true,
+      "blocksShooting": true,
+      "destructible": false
+    },
+    {
+      "id": "door-29-door",
+      "preset": "door",
+      "label": "DOOR",
+      "a": {
+        "x": 480,
+        "y": 632
+      },
+      "b": {
+        "x": 480,
+        "y": 568
+      },
+      "thickness": 6,
+      "blocksVision": false,
+      "blocksMovement": false,
+      "blocksShooting": true,
+      "destructible": false
+    },
+    {
+      "id": "door-31-left",
+      "preset": "wall",
+      "label": "room-9",
+      "roomId": "room-9-copy",
+      "a": {
+        "x": 720,
+        "y": 480
+      },
+      "b": {
+        "x": 632,
+        "y": 480
+      },
+      "thickness": 12,
+      "blocksVision": true,
+      "blocksMovement": true,
+      "blocksShooting": true,
+      "destructible": false
+    },
+    {
+      "id": "door-31-right",
+      "preset": "wall",
+      "label": "room-9",
+      "roomId": "room-9-copy",
+      "a": {
+        "x": 568,
+        "y": 480
+      },
+      "b": {
+        "x": 480,
+        "y": 480
+      },
+      "thickness": 12,
+      "blocksVision": true,
+      "blocksMovement": true,
+      "blocksShooting": true,
+      "destructible": false
+    },
+    {
+      "id": "door-31-door",
+      "preset": "door",
+      "label": "DOOR",
+      "a": {
+        "x": 568,
+        "y": 480
+      },
+      "b": {
+        "x": 632,
+        "y": 480
+      },
+      "thickness": 6,
+      "blocksVision": false,
+      "blocksMovement": false,
+      "blocksShooting": true,
+      "destructible": false
+    },
+    {
+      "id": "door-33-left",
+      "preset": "wall",
+      "label": "room-5",
+      "roomId": "room-5-copy",
+      "a": {
+        "x": 480,
+        "y": 480
+      },
+      "b": {
+        "x": 392,
+        "y": 480
+      },
+      "thickness": 12,
+      "blocksVision": true,
+      "blocksMovement": true,
+      "blocksShooting": true,
+      "destructible": false
+    },
+    {
+      "id": "door-33-right",
+      "preset": "wall",
+      "label": "room-5",
+      "roomId": "room-5-copy",
+      "a": {
+        "x": 328,
+        "y": 480
+      },
+      "b": {
+        "x": 240,
+        "y": 480
+      },
+      "thickness": 12,
+      "blocksVision": true,
+      "blocksMovement": true,
+      "blocksShooting": true,
+      "destructible": true,
+      "hp": 5,
+      "maxHp": 5
+    },
+    {
+      "id": "door-33-door",
+      "preset": "door",
+      "label": "DOOR",
+      "a": {
+        "x": 392,
+        "y": 480
+      },
+      "b": {
+        "x": 328,
+        "y": 480
+      },
+      "thickness": 6,
+      "blocksVision": false,
+      "blocksMovement": false,
+      "blocksShooting": true,
+      "destructible": false
+    },
+    {
+      "id": "door-35-left",
+      "preset": "wall",
+      "label": "room-1",
+      "roomId": "room-1-copy",
+      "a": {
+        "x": 240,
+        "y": 240
+      },
+      "b": {
+        "x": 240,
+        "y": 328
+      },
+      "thickness": 12,
+      "blocksVision": true,
+      "blocksMovement": true,
+      "blocksShooting": true,
+      "destructible": false
+    },
+    {
+      "id": "door-35-right",
+      "preset": "wall",
+      "label": "room-1",
+      "roomId": "room-1-copy",
+      "a": {
+        "x": 240,
+        "y": 392
+      },
+      "b": {
+        "x": 240,
+        "y": 480
+      },
+      "thickness": 12,
+      "blocksVision": true,
+      "blocksMovement": true,
+      "blocksShooting": true,
+      "destructible": true,
+      "hp": 5,
+      "maxHp": 5
+    },
+    {
+      "id": "door-35-door",
+      "preset": "door",
+      "label": "DOOR",
+      "a": {
+        "x": 240,
+        "y": 328
+      },
+      "b": {
+        "x": 240,
+        "y": 392
+      },
+      "thickness": 6,
+      "blocksVision": false,
+      "blocksMovement": false,
+      "blocksShooting": true,
+      "destructible": false
+    },
+    {
+      "id": "door-37-left",
+      "preset": "wall",
+      "label": "room-1",
+      "roomId": "room-1",
+      "a": {
+        "x": 240,
+        "y": 240
+      },
+      "b": {
+        "x": 152,
+        "y": 240
+      },
+      "thickness": 12,
+      "blocksVision": true,
+      "blocksMovement": true,
+      "blocksShooting": true,
+      "destructible": false
+    },
+    {
+      "id": "door-37-right",
+      "preset": "wall",
+      "label": "room-1",
+      "roomId": "room-1",
+      "a": {
+        "x": 88,
+        "y": 240
+      },
+      "b": {
+        "x": 0,
+        "y": 240
+      },
+      "thickness": 12,
+      "blocksVision": true,
+      "blocksMovement": true,
+      "blocksShooting": true,
+      "destructible": false
+    },
+    {
+      "id": "door-37-door",
+      "preset": "door",
+      "label": "DOOR",
+      "a": {
+        "x": 152,
+        "y": 240
+      },
+      "b": {
+        "x": 88,
+        "y": 240
+      },
+      "thickness": 6,
+      "blocksVision": false,
+      "blocksMovement": false,
+      "blocksShooting": true,
+      "destructible": false
+    },
+    {
+      "id": "door-39-left",
+      "preset": "wall",
+      "label": "room-5",
+      "roomId": "room-5",
+      "a": {
+        "x": 480,
+        "y": 240
+      },
+      "b": {
+        "x": 392,
+        "y": 240
+      },
+      "thickness": 12,
+      "blocksVision": true,
+      "blocksMovement": true,
+      "blocksShooting": true,
+      "destructible": true,
+      "hp": 5,
+      "maxHp": 5
+    },
+    {
+      "id": "door-39-right",
+      "preset": "wall",
+      "label": "room-5",
+      "roomId": "room-5",
+      "a": {
+        "x": 328,
+        "y": 240
+      },
+      "b": {
+        "x": 240,
+        "y": 240
+      },
+      "thickness": 12,
+      "blocksVision": true,
+      "blocksMovement": true,
+      "blocksShooting": true,
+      "destructible": false
+    },
+    {
+      "id": "door-39-door",
+      "preset": "door",
+      "label": "DOOR",
+      "a": {
+        "x": 392,
+        "y": 240
+      },
+      "b": {
+        "x": 328,
+        "y": 240
+      },
+      "thickness": 6,
+      "blocksVision": false,
+      "blocksMovement": false,
+      "blocksShooting": true,
+      "destructible": false
+    },
+    {
+      "id": "door-41-left",
+      "preset": "wall",
+      "label": "room-9",
+      "roomId": "room-9",
+      "a": {
+        "x": 720,
+        "y": 240
+      },
+      "b": {
+        "x": 632,
+        "y": 240
+      },
+      "thickness": 12,
+      "blocksVision": true,
+      "blocksMovement": true,
+      "blocksShooting": true,
+      "destructible": false
+    },
+    {
+      "id": "door-41-right",
+      "preset": "wall",
+      "label": "room-9",
+      "roomId": "room-9",
+      "a": {
+        "x": 568,
+        "y": 240
+      },
+      "b": {
+        "x": 480,
+        "y": 240
+      },
+      "thickness": 12,
+      "blocksVision": true,
+      "blocksMovement": true,
+      "blocksShooting": true,
+      "destructible": false
+    },
+    {
+      "id": "door-41-door",
+      "preset": "door",
+      "label": "DOOR",
+      "a": {
+        "x": 632,
+        "y": 240
+      },
+      "b": {
+        "x": 568,
+        "y": 240
+      },
+      "thickness": 6,
+      "blocksVision": false,
+      "blocksMovement": false,
+      "blocksShooting": true,
+      "destructible": false
+    },
+    {
+      "id": "door-43-left",
+      "preset": "wall",
+      "label": "room-5",
+      "roomId": "room-5-copy",
+      "a": {
+        "x": 480,
+        "y": 240
+      },
+      "b": {
+        "x": 480,
+        "y": 328
+      },
+      "thickness": 12,
+      "blocksVision": true,
+      "blocksMovement": true,
+      "blocksShooting": true,
+      "destructible": true,
+      "hp": 5,
+      "maxHp": 5
+    },
+    {
+      "id": "door-43-right",
+      "preset": "wall",
+      "label": "room-5",
+      "roomId": "room-5-copy",
+      "a": {
+        "x": 480,
+        "y": 392
+      },
+      "b": {
+        "x": 480,
+        "y": 480
+      },
+      "thickness": 12,
+      "blocksVision": true,
+      "blocksMovement": true,
+      "blocksShooting": true,
+      "destructible": false
+    },
+    {
+      "id": "door-43-door",
+      "preset": "door",
+      "label": "DOOR",
+      "a": {
+        "x": 480,
+        "y": 328
+      },
+      "b": {
+        "x": 480,
+        "y": 392
+      },
+      "thickness": 6,
+      "blocksVision": false,
+      "blocksMovement": false,
+      "blocksShooting": true,
+      "destructible": false
+    },
+    {
+      "id": "window-45",
+      "preset": "window",
+      "label": "window",
+      "a": {
+        "x": 80,
+        "y": 360
+      },
+      "b": {
+        "x": 160,
+        "y": 360
+      },
+      "thickness": 12,
+      "blocksVision": false,
+      "blocksMovement": true,
+      "blocksShooting": true,
+      "destructible": false
+    },
+    {
+      "id": "breakable-wall-50",
+      "preset": "breakable-wall",
+      "label": "breakable wall",
+      "a": {
+        "x": 560,
+        "y": 360
+      },
+      "b": {
+        "x": 640,
+        "y": 360
+      },
+      "thickness": 12,
+      "blocksVision": true,
+      "blocksMovement": true,
+      "blocksShooting": true,
+      "destructible": true
+    },
+    {
+      "id": "room-47-north",
+      "preset": "wall",
+      "label": "room-47",
+      "roomId": "room-47",
+      "a": {
+        "x": 340,
+        "y": 338
+      },
+      "b": {
+        "x": 380,
+        "y": 338
+      },
+      "thickness": 12,
+      "blocksVision": true,
+      "blocksMovement": true,
+      "blocksShooting": true,
+      "destructible": false
+    },
+    {
+      "id": "room-47-east",
+      "preset": "wall",
+      "label": "room-47",
+      "roomId": "room-47",
+      "a": {
+        "x": 380,
+        "y": 338
+      },
+      "b": {
+        "x": 380,
+        "y": 378
+      },
+      "thickness": 12,
+      "blocksVision": true,
+      "blocksMovement": true,
+      "blocksShooting": true,
+      "destructible": false
+    },
+    {
+      "id": "room-47-south",
+      "preset": "wall",
+      "label": "room-47",
+      "roomId": "room-47",
+      "a": {
+        "x": 380,
+        "y": 378
+      },
+      "b": {
+        "x": 340,
+        "y": 378
+      },
+      "thickness": 12,
+      "blocksVision": true,
+      "blocksMovement": true,
+      "blocksShooting": true,
+      "destructible": false
+    },
+    {
+      "id": "room-47-west",
+      "preset": "wall",
+      "label": "room-47",
+      "roomId": "room-47",
+      "a": {
+        "x": 340,
+        "y": 378
+      },
+      "b": {
+        "x": 340,
+        "y": 338
+      },
+      "thickness": 12,
+      "blocksVision": true,
+      "blocksMovement": true,
+      "blocksShooting": true,
+      "destructible": false
+    },
+    {
+      "id": "wall-55",
+      "preset": "wall",
+      "label": "wall",
+      "a": {
+        "x": 320,
+        "y": 560
+      },
+      "b": {
+        "x": 400,
+        "y": 560
+      },
+      "thickness": 12,
+      "blocksVision": true,
+      "blocksMovement": true,
+      "blocksShooting": true,
+      "destructible": false
+    },
+    {
+      "id": "wall-56",
+      "preset": "wall",
+      "label": "wall",
+      "a": {
+        "x": 320,
+        "y": 160
+      },
+      "b": {
+        "x": 400,
+        "y": 160
+      },
+      "thickness": 12,
+      "blocksVision": true,
+      "blocksMovement": true,
+      "blocksShooting": true,
+      "destructible": false
+    },
+    {
+      "id": "door-57-left",
+      "preset": "wall",
+      "label": "room-1",
+      "roomId": "room-1",
+      "a": {
+        "x": 240,
+        "y": 0
+      },
+      "b": {
+        "x": 240,
+        "y": 88
+      },
+      "thickness": 12,
+      "blocksVision": true,
+      "blocksMovement": true,
+      "blocksShooting": true,
+      "destructible": false
+    },
+    {
+      "id": "door-57-right",
+      "preset": "wall",
+      "label": "room-1",
+      "roomId": "room-1",
+      "a": {
+        "x": 240,
+        "y": 152
+      },
+      "b": {
+        "x": 240,
+        "y": 240
+      },
+      "thickness": 12,
+      "blocksVision": true,
+      "blocksMovement": true,
+      "blocksShooting": true,
+      "destructible": false
+    },
+    {
+      "id": "door-57-door",
+      "preset": "door",
+      "label": "DOOR",
+      "a": {
+        "x": 240,
+        "y": 88
+      },
+      "b": {
+        "x": 240,
+        "y": 152
+      },
+      "thickness": 6,
+      "blocksVision": false,
+      "blocksMovement": false,
+      "blocksShooting": true,
+      "destructible": false
+    },
+    {
+      "id": "door-59-left",
+      "preset": "wall",
+      "label": "room-5",
+      "roomId": "room-5",
+      "a": {
+        "x": 480,
+        "y": 0
+      },
+      "b": {
+        "x": 480,
+        "y": 88
+      },
+      "thickness": 12,
+      "blocksVision": true,
+      "blocksMovement": true,
+      "blocksShooting": true,
+      "destructible": false
+    },
+    {
+      "id": "door-59-right",
+      "preset": "wall",
+      "label": "room-5",
+      "roomId": "room-5",
+      "a": {
+        "x": 480,
+        "y": 152
+      },
+      "b": {
+        "x": 480,
+        "y": 240
+      },
+      "thickness": 12,
+      "blocksVision": true,
+      "blocksMovement": true,
+      "blocksShooting": true,
+      "destructible": false
+    },
+    {
+      "id": "door-59-door",
+      "preset": "door",
+      "label": "DOOR",
+      "a": {
+        "x": 480,
+        "y": 88
+      },
+      "b": {
+        "x": 480,
+        "y": 152
+      },
+      "thickness": 6,
+      "blocksVision": false,
+      "blocksMovement": false,
+      "blocksShooting": true,
+      "destructible": false
+    },
+    {
+      "id": "window-59",
+      "preset": "window",
+      "label": "window",
+      "a": {
+        "x": 520,
+        "y": 200
+      },
+      "b": {
+        "x": 560,
+        "y": 160
+      },
+      "thickness": 12,
+      "blocksVision": false,
+      "blocksMovement": true,
+      "blocksShooting": true,
+      "destructible": false
+    },
+    {
+      "id": "window-60",
+      "preset": "window",
+      "label": "window",
+      "a": {
+        "x": 160,
+        "y": 160
+      },
+      "b": {
+        "x": 200,
+        "y": 200
+      },
+      "thickness": 12,
+      "blocksVision": false,
+      "blocksMovement": true,
+      "blocksShooting": true,
+      "destructible": false
+    },
+    {
+      "id": "mesh-59",
+      "preset": "mesh",
+      "label": "mesh",
+      "a": {
+        "x": 160,
+        "y": 160
+      },
+      "b": {
+        "x": 120,
+        "y": 120
+      },
+      "thickness": 5,
+      "blocksVision": false,
+      "blocksMovement": true,
+      "blocksShooting": false,
+      "destructible": false
+    },
+    {
+      "id": "mesh-60",
+      "preset": "mesh",
+      "label": "mesh",
+      "a": {
+        "x": 560,
+        "y": 160
+      },
+      "b": {
+        "x": 600,
+        "y": 120
+      },
+      "thickness": 5,
+      "blocksVision": false,
+      "blocksMovement": true,
+      "blocksShooting": false,
+      "destructible": false
+    },
+    {
+      "id": "window-61",
+      "preset": "window",
+      "label": "window",
+      "a": {
+        "x": 200,
+        "y": 520
+      },
+      "b": {
+        "x": 160,
+        "y": 560
+      },
+      "thickness": 12,
+      "blocksVision": false,
+      "blocksMovement": true,
+      "blocksShooting": true,
+      "destructible": false
+    },
+    {
+      "id": "window-62",
+      "preset": "window",
+      "label": "window",
+      "a": {
+        "x": 520,
+        "y": 520
+      },
+      "b": {
+        "x": 560,
+        "y": 560
+      },
+      "thickness": 12,
+      "blocksVision": false,
+      "blocksMovement": true,
+      "blocksShooting": true,
+      "destructible": false
+    },
+    {
+      "id": "mesh-63",
+      "preset": "mesh",
+      "label": "mesh",
+      "a": {
+        "x": 160,
+        "y": 560
+      },
+      "b": {
+        "x": 120,
+        "y": 600
+      },
+      "thickness": 5,
+      "blocksVision": false,
+      "blocksMovement": true,
+      "blocksShooting": false,
+      "destructible": false
+    },
+    {
+      "id": "mesh-64",
+      "preset": "mesh",
+      "label": "mesh",
+      "a": {
+        "x": 560,
+        "y": 560
+      },
+      "b": {
+        "x": 600,
+        "y": 600
+      },
+      "thickness": 5,
+      "blocksVision": false,
+      "blocksMovement": true,
+      "blocksShooting": false,
+      "destructible": false
+    },
+    {
+      "id": "window-65",
+      "preset": "window",
+      "label": "window",
+      "a": {
+        "x": 585,
+        "y": 402
+      },
+      "b": {
+        "x": 613,
+        "y": 402
+      },
+      "thickness": 12,
+      "blocksVision": false,
+      "blocksMovement": true,
+      "blocksShooting": true,
+      "destructible": false
+    },
+    {
+      "id": "window-66",
+      "preset": "window",
+      "label": "window",
+      "a": {
+        "x": 587,
+        "y": 321
+      },
+      "b": {
+        "x": 615,
+        "y": 321
+      },
+      "thickness": 12,
+      "blocksVision": false,
+      "blocksMovement": true,
+      "blocksShooting": true,
+      "destructible": false
+    }
+  ],
+  "spawns": [
+    {
+      "id": "p1",
+      "team": "blue",
+      "position": {
+        "x": 360,
+        "y": 40
+      },
+      "angle": 0
+    },
+    {
+      "id": "p2",
+      "team": "orange",
+      "position": {
+        "x": 360,
+        "y": 680
+      },
+      "angle": 3.141592653589793
+    }
+  ],
+  "sensors": [],
+  "utilityPlacements": [],
+  "lighting": [],
+  "objectives": [
+    {
+      "id": "objective-1",
+      "position": {
+        "x": 360,
+        "y": 360
+      },
+      "radius": 56
+    }
+  ],
+  "objective": {
+    "id": "objective-1",
+    "position": {
+      "x": 360,
+      "y": 360
+    },
+    "radius": 56
+  },
+  "notes": ""
+}
