@@ -7,7 +7,6 @@ import {
   distanceToSegment,
   isHingedDoorSegment,
   isShootableDestructibleSegment,
-  hasLineOfSight,
   lineIntersection,
   mapObjectives,
   mul,
@@ -19,7 +18,6 @@ import {
   segmentPreset,
   type AuthoritativeEvent,
   type ActionResult,
-  type ClassAbilityId,
   type ClientMessage,
   type DeployedCamera,
   type Detection,
@@ -43,6 +41,7 @@ import {
   CAMERA_HIT_RADIUS,
   CAMERA_RANGE,
   CAMERA_RADIUS,
+  DEBUG_VISION_RAYS,
   DOOR_COLLISION_SUBSTEPS,
   DOOR_COLLISION_SKIN,
   DEPLOYABLE_WALL_RANGE,
@@ -53,11 +52,18 @@ import {
   DOOR_PUSH_SKIN,
   DOOR_PUSH_STRENGTH,
   DOOR_TOGGLE_RANGE,
+  ENABLE_MATCH_ANALYTICS,
   FIRE_RANGE,
+  MAX_ACTION_RESULTS,
+  MAX_ANALYTICS_EVENTS,
+  MAX_EXPLORED_POINTS,
+  MAX_REPLAY_COMMANDS,
+  MAX_REPLAY_EVENTS,
   MOLOTOV_DAMAGE_INTERVAL,
   MOLOTOV_RANGE,
   MOLOTOV_RADIUS,
   MOLOTOV_TICKS,
+  NORMAL_VISION_RAYS,
   PLAYER_CLOSE_VISION_RADIUS,
   PLAYER_WALK_SPEED,
   PLAYER_MAX_HP,
@@ -124,6 +130,10 @@ interface DesiredMovement {
   desired: Vec2;
 }
 
+interface RoomScratch {
+  desiredMovements: DesiredMovement[];
+}
+
 interface PlayerSlot {
   id: PlayerId;
   connected: boolean;
@@ -159,6 +169,14 @@ export interface RoomState {
   round: ServerSnapshot["round"];
   players: PlayerRecord;
   slots: SlotRecord;
+  playerList: PlayerState[];
+  slotList: PlayerSlot[];
+  activeMovementWalls: Wall[];
+  activeVisionWalls: Wall[];
+  activeShootingWalls: Wall[];
+  activeDoors: Wall[];
+  activePlacementBlockers: Wall[];
+  scratch: RoomScratch;
   detections: Detection[];
   shotImpacts: ShotImpact[];
   deployedCameras: DeployedCamera[];
@@ -204,7 +222,7 @@ export function createRoom(id: string, sourceMap: MapDefinition = sampleMap): Ro
   ) as PlayerRecord;
   const slots = Object.fromEntries(playerIds.map((playerId) => [playerId, createSlot(playerId)])) as SlotRecord;
 
-  return {
+  const room: RoomState = {
     id,
     map,
     baseMap,
@@ -213,6 +231,14 @@ export function createRoom(id: string, sourceMap: MapDefinition = sampleMap): Ro
     round: { phase: "lobby", roundNumber: 1, scores: scoresForPlayers(playerIds), startsAtTick: ROUND_COUNTDOWN_TICKS, endsAtTick: ROUND_COUNTDOWN_TICKS + ROUND_TICKS },
     players,
     slots,
+    playerList: Object.values(players),
+    slotList: Object.values(slots),
+    activeMovementWalls: [],
+    activeVisionWalls: [],
+    activeShootingWalls: [],
+    activeDoors: [],
+    activePlacementBlockers: [],
+    scratch: { desiredMovements: [] },
     detections: [],
     shotImpacts: [],
     deployedCameras: [],
@@ -223,6 +249,8 @@ export function createRoom(id: string, sourceMap: MapDefinition = sampleMap): Ro
     replay: { mapId: map.id, mapVersion: map.version, seed: 1, commands: [], events: [] },
     analytics: []
   };
+  refreshGeometryCaches(room);
+  return room;
 }
 
 function createSlot(id: PlayerId): PlayerSlot {
@@ -245,7 +273,7 @@ function createSlot(id: PlayerId): PlayerSlot {
 }
 
 function playerIds(room: RoomState): PlayerId[] {
-  return Object.keys(room.players) as PlayerId[];
+  return room.playerList.map((player) => player.id);
 }
 
 function getPlayer(room: RoomState, id: PlayerId): PlayerState {
@@ -262,7 +290,7 @@ function getSlot(room: RoomState, id: PlayerId): PlayerSlot {
 
 function enemyPlayers(room: RoomState, playerId: PlayerId): PlayerState[] {
   const player = getPlayer(room, playerId);
-  return Object.values(room.players).filter((candidate) => candidate.id !== playerId && candidate.team !== player.team);
+  return room.playerList.filter((candidate) => candidate.id !== playerId && candidate.team !== player.team);
 }
 
 function scoresForPlayers(ids: PlayerId[]): Record<PlayerId, number> {
@@ -286,13 +314,13 @@ function applyPlayerLoadout(player: PlayerState, selection?: PlayerLoadoutSelect
 }
 
 export function joinRoom(room: RoomState, debug = false, preferred?: PlayerId, loadout?: PlayerLoadoutSelection): ServerWelcome | null {
-  const playerId = preferred ?? Object.values(room.slots).find((candidate) => !candidate.connected)?.id ?? null;
+  const playerId = preferred ?? room.slotList.find((candidate) => !candidate.connected)?.id ?? null;
   if (!playerId || room.round.matchWinner) return null;
   const slot = getSlot(room, playerId);
   applyPlayerLoadout(getPlayer(room, playerId), loadout);
   slot.connected = true;
   slot.debug = debug;
-  if (Object.values(room.slots).every((candidate) => candidate.connected) && room.round.phase === "lobby") {
+  if (room.slotList.every((candidate) => candidate.connected) && room.round.phase === "lobby") {
     room.round.phase = "countdown";
   }
   return { type: "welcome", playerId, roomId: room.id, reconnectToken: slot.reconnectToken, map: room.map };
@@ -313,7 +341,7 @@ export function applyClientMessage(room: RoomState, playerId: PlayerId, message:
   const slot = getSlot(room, playerId);
   slot.inputState = { move: command.move, aim: command.aim, fire: command.fire, walk: Boolean(command.walk) };
   enqueueCommandActions(slot, command);
-  room.replay.commands.push({ ...command, playerId });
+  pushBounded(room.replay.commands, { ...command, playerId }, MAX_REPLAY_COMMANDS);
 }
 
 function enqueueCommandActions(slot: PlayerSlot, command: PlayerCommand): void {
@@ -335,8 +363,24 @@ function enqueueCommandActions(slot: PlayerSlot, command: PlayerCommand): void {
   }
 }
 
+function pushBounded<T>(items: T[], item: T, limit: number): void {
+  items.push(item);
+  if (items.length > limit) items.splice(0, items.length - limit);
+}
+
+function retainInPlace<T>(items: T[], keep: (item: T) => boolean): void {
+  let write = 0;
+  for (let read = 0; read < items.length; read += 1) {
+    const item = items[read]!;
+    if (!keep(item)) continue;
+    items[write] = item;
+    write += 1;
+  }
+  items.length = write;
+}
+
 function rejectPendingActions(room: RoomState, reason: ActionRejectReason): void {
-  for (const slot of Object.values(room.slots)) {
+  for (const slot of room.slotList) {
     while (slot.pendingActions.length > 0) {
       const action = slot.pendingActions.shift()!;
       recordActionResult(slot, action.seq, action.type, false, reason);
@@ -375,17 +419,21 @@ function processPendingActions(room: RoomState, player: PlayerState, slot: Playe
 }
 
 function recordActionResult(slot: PlayerSlot, seq: number, action: ActionResult["action"], accepted: boolean, reason?: ActionRejectReason): void {
-  slot.actionResults.push({ seq, action, accepted, ...(reason ? { reason } : {}) });
-  slot.actionResults = slot.actionResults.slice(-32);
+  pushBounded(slot.actionResults, { seq, action, accepted, ...(reason ? { reason } : {}) }, MAX_ACTION_RESULTS);
 }
 
 export function stepRoom(room: RoomState): void {
   room.tick += 1;
-  room.shotImpacts = room.shotImpacts.filter((impact) => impact.tick >= room.tick - 5);
-  room.molotovs = room.molotovs.filter((zone) => zone.expiresAtTick >= room.tick);
-  room.smokes = room.smokes.filter((zone) => zone.expiresAtTick >= room.tick);
-  room.soundSensors = room.soundSensors.filter((zone) => !zone.destroyed);
+  retainInPlace(room.shotImpacts, (impact) => impact.tick >= room.tick - 5);
+  if (room.molotovs.length > 0) retainInPlace(room.molotovs, (zone) => zone.expiresAtTick >= room.tick);
+  if (room.smokes.length > 0) retainInPlace(room.smokes, (zone) => zone.expiresAtTick >= room.tick);
+  if (room.soundSensors.length > 0) retainInPlace(room.soundSensors, (zone) => !zone.destroyed);
   if (room.round.phase === "ended") return;
+  if (room.round.phase === "lobby") {
+    integrateDoorsIfNeeded(room);
+    rejectPendingActions(room, "round-inactive");
+    return;
+  }
   if (room.round.phase === "countdown" && room.tick >= room.round.startsAtTick) {
     applyPendingLoadouts(room);
     room.round.phase = "active";
@@ -395,13 +443,14 @@ export function stepRoom(room: RoomState): void {
     pushEvent(room, { type: "round-start", tick: room.tick });
   }
   if (!isPlayablePhase(room.round.phase)) {
-    integrateDoors(room);
+    integrateDoorsIfNeeded(room);
     rejectPendingActions(room, "round-inactive");
     return;
   }
 
-  const desiredMovements: DesiredMovement[] = [];
-  for (const player of Object.values(room.players)) {
+  const desiredMovements = room.scratch.desiredMovements;
+  desiredMovements.length = 0;
+  for (const player of room.playerList) {
     if (!player.alive) continue;
     const slot = getSlot(room, player.id);
     const input = slot.inputState;
@@ -414,23 +463,23 @@ export function stepRoom(room: RoomState): void {
     player.aim = input.aim;
     desiredMovements.push({ player, slot, input, desired });
   }
-  integrateDoors(room);
+  integrateDoorsIfNeeded(room);
 
   for (const { player, slot, input, desired } of desiredMovements) {
-    const next = movePlayerWithSweptCollision(room.map, player.position, desired, PLAYER_RADIUS);
+    const next = movePlayerWithSweptCollision(room.map, player.position, desired, PLAYER_RADIUS, room.activeMovementWalls);
     player.velocity = { x: next.x - player.position.x, y: next.y - player.position.y };
     player.position = next;
     processPendingActions(room, player, slot);
     if (input.fire && room.tick >= slot.nextActionTick) resolveShot(room, player.id);
-    room.analytics.push({ type: "movement-sample", tick: room.tick, data: { playerId: player.id, position: player.position } });
+    if (ENABLE_MATCH_ANALYTICS) pushBounded(room.analytics, { type: "movement-sample", tick: room.tick, data: { playerId: player.id, position: player.position } }, MAX_ANALYTICS_EVENTS);
   }
   resolvePlayerDoorOverlaps(room);
 
-  resolveSensors(room);
-  resolveSoundSensors(room);
-  resolveMolotovDamage(room);
-  resolveObjectiveCapture(room);
-  room.detections = room.detections.filter((detection) => detection.expiresAtTick >= room.tick);
+  if (room.map.sensors.length > 0) resolveSensors(room);
+  if (room.soundSensors.length > 0) resolveSoundSensors(room);
+  if (room.molotovs.length > 0) resolveMolotovDamage(room);
+  if (room.round.phase === "overtime" && room.round.objective) resolveObjectiveCapture(room);
+  if (room.detections.length > 0) retainInPlace(room.detections, (detection) => detection.expiresAtTick >= room.tick);
   if (room.round.phase === "active" && room.tick >= room.round.endsAtTick) enterOvertimeOrDraw(room);
   if (room.round.phase === "overtime" && (room.round.overtimeEndsAtTick ?? 0) <= room.tick) finishRound(room, "draw", "timer");
 }
@@ -483,11 +532,19 @@ function initializeWallHp(wall: MapDefinition["walls"][number]): MapDefinition["
   return { ...wall, maxHp, hp: wall.hp ?? maxHp };
 }
 
+export function refreshGeometryCaches(room: RoomState): void {
+  room.activeMovementWalls = room.map.walls.filter(segmentBlocksMovement);
+  room.activeVisionWalls = room.map.walls.filter((wall) => !wall.destroyed && wall.blocksVision);
+  room.activeShootingWalls = room.map.walls.filter((wall) => !wall.destroyed && (segmentBlocksShooting(wall) || isShootableDestructibleSegment(wall)));
+  room.activeDoors = room.map.walls.filter((wall) => isHingedDoorSegment(wall) && !wall.destroyed);
+  room.activePlacementBlockers = room.map.walls.filter((wall) => !wall.destroyed && (isHingedDoorSegment(wall) || wall.blocksShooting || wall.blocksVision));
+}
+
 function collectDoorPushes(room: RoomState, current: Vec2, desired: Vec2, delta: Vec2): void {
   const moveDistance = Math.hypot(delta.x, delta.y);
   if (moveDistance < 0.01) return;
-  for (const door of room.map.walls) {
-    if (!isHingedDoorSegment(door) || !door.hinge || door.destroyed) continue;
+  for (const door of room.activeDoors) {
+    if (!door.hinge) continue;
     const threshold = PLAYER_RADIUS + door.thickness / 2 + DOOR_PUSH_SKIN;
     const currentDistance = distanceToSegment(current, door.a, door.b);
     const desiredDistance = distanceToSegment(desired, door.a, door.b);
@@ -517,7 +574,7 @@ function collectDoorPushes(room: RoomState, current: Vec2, desired: Vec2, delta:
   }
 }
 
-function movePlayerWithSweptCollision(map: MapDefinition, current: Vec2, desired: Vec2, radius: number): Vec2 {
+function movePlayerWithSweptCollision(map: MapDefinition, current: Vec2, desired: Vec2, radius: number, movementWalls = map.walls): Vec2 {
   const totalDistance = distance(current, desired);
   const steps = Math.max(1, Math.ceil(totalDistance / Math.max(1, radius * 0.3)));
   let position = current;
@@ -526,19 +583,19 @@ function movePlayerWithSweptCollision(map: MapDefinition, current: Vec2, desired
       x: current.x + ((desired.x - current.x) * step) / steps,
       y: current.y + ((desired.y - current.y) * step) / steps
     };
-    const next = moveWithCapsuleCollision(map, position, target, radius);
+    const next = moveWithCapsuleCollision(map, position, target, radius, movementWalls);
     if (next === position) return position;
     position = next;
   }
   return position;
 }
 
-function moveWithCapsuleCollision(map: MapDefinition, current: Vec2, desired: Vec2, radius: number): Vec2 {
+function moveWithCapsuleCollision(map: MapDefinition, current: Vec2, desired: Vec2, radius: number, movementWalls = map.walls): Vec2 {
   let resolved = {
     x: Math.max(radius, Math.min(map.bounds.width - radius, desired.x)),
     y: Math.max(radius, Math.min(map.bounds.height - radius, desired.y))
   };
-  for (const wall of map.walls) {
+  for (const wall of movementWalls) {
     if (!segmentBlocksMovement(wall)) continue;
     const threshold = radius + wall.thickness / 2 + (isHingedDoorSegment(wall) ? DOOR_COLLISION_SKIN : 0);
     const closest = closestPointOnSegment(resolved, wall.a, wall.b);
@@ -557,9 +614,18 @@ function moveWithCapsuleCollision(map: MapDefinition, current: Vec2, desired: Ve
   return resolved;
 }
 
+function integrateDoorsIfNeeded(room: RoomState): void {
+  if (!room.activeDoors.some((door) => doorNeedsIntegration(room, door))) return;
+  integrateDoors(room);
+}
+
+function doorNeedsIntegration(room: RoomState, door: Wall): boolean {
+  return Boolean(door.targetAngle !== undefined || Math.abs(door.angularVelocity ?? 0) > 0.0005 || room.tick - (door.lastPushTick ?? -9999) <= 2);
+}
+
 function integrateDoors(room: RoomState): void {
-  for (const door of room.map.walls) {
-    if (!isHingedDoorSegment(door) || !door.hinge || !door.closedB || door.destroyed) continue;
+  for (const door of room.activeDoors) {
+    if (!door.hinge || !door.closedB) continue;
     if (door.targetAngle !== undefined) {
       const delta = door.targetAngle - (door.currentAngle ?? 0);
       if (Math.abs(delta) < 0.015 && Math.abs(door.angularVelocity ?? 0) < 0.006) {
@@ -598,11 +664,11 @@ function integrateDoors(room: RoomState): void {
 }
 
 function resolvePlayerDoorOverlaps(room: RoomState): void {
-  for (const player of Object.values(room.players)) {
+  for (const player of room.playerList) {
     if (!player.alive) continue;
     let position = player.position;
-    for (const door of room.map.walls) {
-      if (!isHingedDoorSegment(door) || !segmentBlocksMovement(door)) continue;
+    for (const door of room.activeDoors) {
+      if (!segmentBlocksMovement(door)) continue;
       const threshold = PLAYER_RADIUS + door.thickness / 2 + DOOR_COLLISION_SKIN;
       const closest = closestPointOnSegment(position, door.a, door.b);
       const separation = { x: position.x - closest.x, y: position.y - closest.y };
@@ -623,7 +689,7 @@ function resolvePlayerDoorOverlaps(room: RoomState): void {
 function doorWouldHitWall(room: RoomState, door: MapDefinition["walls"][number], nextB: Vec2): boolean {
   if (!door.hinge) return false;
   const threshold = door.thickness / 2;
-  return room.map.walls.some((wall) => {
+  return room.activeMovementWalls.some((wall) => {
     if (wall.id === door.id || !segmentBlocksMovement(wall)) return false;
     if (isHingedDoorSegment(wall) && (!wall.hinge || !wall.closedB)) return false;
     if (wallSharesDoorFramePoint(door, wall, threshold + wall.thickness / 2 + 2)) return false;
@@ -669,7 +735,7 @@ function clampDoorSpeed(value: number): number {
 function doorWouldPushIntoPlayer(room: RoomState, door: MapDefinition["walls"][number], nextB: Vec2): boolean {
   if (!door.hinge) return false;
   const threshold = PLAYER_RADIUS + door.thickness / 2;
-  return Object.values(room.players).some((player) => {
+  return room.playerList.some((player) => {
     if (!player.alive) return false;
     const currentDistance = distanceToSegment(player.position, door.a, door.b);
     const nextDistance = distanceToSegment(player.position, door.hinge!, nextB);
@@ -698,8 +764,8 @@ function startReload(player: PlayerState, tick: number): boolean {
 }
 
 function toggleNearestDoor(room: RoomState, player: PlayerState): boolean {
-  const door = room.map.walls
-    .filter((candidate) => isHingedDoorSegment(candidate) && !candidate.destroyed && candidate.hinge && candidate.closedB)
+  const door = room.activeDoors
+    .filter((candidate) => candidate.hinge && candidate.closedB)
     .map((candidate) => ({
       door: candidate,
       distance: Math.max(0, distanceToSegment(player.position, candidate.a, candidate.b) - PLAYER_RADIUS - candidate.thickness / 2)
@@ -771,7 +837,7 @@ function scoutDash(room: RoomState, player: PlayerState, slot: PlayerSlot): void
   const moveLength = Math.hypot(move.x, move.y);
   const direction = moveLength > 0.01 ? normalize(move) : angleToVector(player.aim);
   const desired = add(player.position, mul(direction, SCOUT_DASH_DISTANCE));
-  const next = movePlayerWithSweptCollision(room.map, player.position, desired, PLAYER_RADIUS);
+    const next = movePlayerWithSweptCollision(room.map, player.position, desired, PLAYER_RADIUS, room.activeMovementWalls);
   player.velocity = { x: next.x - player.position.x, y: next.y - player.position.y };
   player.position = next;
 }
@@ -800,8 +866,9 @@ function isLevelBoundarySegment(map: MapDefinition, wall: Wall): boolean {
 function destroyWallSegment(room: RoomState, wall: Wall, playerId: PlayerId): void {
   wall.hp = 0;
   wall.destroyed = true;
-  getSlot(room, playerId).lastSeenWalls.set(wall.id, structuredClone(wall));
+  getSlot(room, playerId).lastSeenWalls.set(wall.id, cloneWall(wall));
   pushEvent(room, { type: "wall-destroyed", tick: room.tick, wallId: wall.id, playerId });
+  refreshGeometryCaches(room);
 }
 
 const gadgetStrategies: Record<GadgetKind, GadgetStrategy> = {
@@ -812,7 +879,7 @@ const gadgetStrategies: Record<GadgetKind, GadgetStrategy> = {
     deploy(room, player, _action, resolved) {
       const camera: DeployedCamera = { id: `${player.id}-cam-${room.tick}-${room.deployedCameras.length}`, owner: player.id, position: resolved.position, radius: CAMERA_RADIUS, hp: 1 };
       room.deployedCameras.push(camera);
-      getSlot(room, player.id).lastSeenCameras.set(camera.id, structuredClone(camera));
+      getSlot(room, player.id).lastSeenCameras.set(camera.id, cloneCamera(camera));
       pushEvent(room, { type: "camera-deployed", tick: room.tick, playerId: player.id, cameraId: camera.id });
       return { accepted: true };
     }
@@ -846,7 +913,8 @@ const gadgetStrategies: Record<GadgetKind, GadgetStrategy> = {
     deploy(room, player, action, resolved) {
       const wall = createDeployableWall(`${player.id}-wall-${room.tick}-${room.map.walls.length}`, resolved.position, action.angle);
       room.map.walls.push(wall);
-      getSlot(room, player.id).lastSeenWalls.set(wall.id, structuredClone(wall));
+      refreshGeometryCaches(room);
+      getSlot(room, player.id).lastSeenWalls.set(wall.id, cloneWall(wall));
       pushEvent(room, { type: "deployable-wall-deployed", tick: room.tick, playerId: player.id, wallId: wall.id });
       return { accepted: true };
     }
@@ -996,8 +1064,7 @@ function resolveHitscan(room: RoomState, shooterId: PlayerId, origin: Vec2, rayE
     }
   }
 
-  for (const wall of room.map.walls) {
-    if (wall.destroyed) continue;
+  for (const wall of room.activeShootingWalls) {
     const hit = lineIntersection(origin, rayEnd, wall.a, wall.b);
     if (!hit) continue;
     const hitDistance = distance(origin, hit);
@@ -1031,8 +1098,8 @@ function damageCamera(room: RoomState, cameraId: string, shooterId: PlayerId): v
   if (!camera || camera.destroyed) return;
   camera.hp = 0;
   camera.destroyed = true;
-  getSlot(room, shooterId).lastSeenCameras.set(camera.id, structuredClone(camera));
-  getSlot(room, camera.owner).lastSeenCameras.set(camera.id, structuredClone(camera));
+  getSlot(room, shooterId).lastSeenCameras.set(camera.id, cloneCamera(camera));
+  getSlot(room, camera.owner).lastSeenCameras.set(camera.id, cloneCamera(camera));
   pushEvent(room, { type: "camera-destroyed", tick: room.tick, playerId: shooterId, cameraId: camera.id });
 }
 
@@ -1071,7 +1138,7 @@ function chooseOvertimeObjective(room: RoomState): ReturnType<typeof mapObjectiv
 function resolveObjectiveCapture(room: RoomState): void {
   if (room.round.phase !== "overtime" || !room.round.objective) return;
   const objective = room.round.objective;
-  const inside = Object.values(room.players).filter((player) => player.alive && distance(player.position, objective.position) <= objective.radius);
+  const inside = room.playerList.filter((player) => player.alive && distance(player.position, objective.position) <= objective.radius);
   if (inside.length === 0) {
     delete objective.owner;
     objective.progressTicks = 0;
@@ -1115,6 +1182,7 @@ function finishRound(room: RoomState, winner: PlayerId | "draw", reason: "kill" 
 
 function resetRoundWorld(room: RoomState): void {
   room.map = initializeRuntimeMap(structuredClone(room.baseMap));
+  refreshGeometryCaches(room);
   room.detections = [];
   room.shotImpacts = [];
   room.deployedCameras = [];
@@ -1154,7 +1222,7 @@ function resetPlayersForRound(room: RoomState): void {
 }
 
 function applyPendingLoadouts(room: RoomState): void {
-  for (const player of Object.values(room.players)) {
+  for (const player of room.playerList) {
     applyPendingLoadout(player, getSlot(room, player.id));
   }
 }
@@ -1184,7 +1252,7 @@ function resetMatch(room: RoomState): void {
 }
 
 export function isExpiredUnfilledLobby(room: RoomState, nowMs = Date.now()): boolean {
-  const connected = Object.values(room.slots).filter((slot) => slot.connected).length;
+  const connected = room.slotList.filter((slot) => slot.connected).length;
   return room.round.phase === "lobby" && connected < Object.keys(room.slots).length && nowMs - room.createdAtMs >= 60_000;
 }
 
@@ -1192,9 +1260,9 @@ function resolveMolotovDamage(room: RoomState): void {
   for (const zone of room.molotovs) {
     const age = room.tick - zone.createdAtTick;
     if (age <= 0 || age % MOLOTOV_DAMAGE_INTERVAL !== 0) continue;
-    for (const player of Object.values(room.players)) {
+    for (const player of room.playerList) {
       if (!player.alive || distance(player.position, zone.position) > zone.radius) continue;
-      if (!hasLineOfSight(room.map, zone.position, player.position)) continue;
+      if (!hasLineOfSightWithSmoke(room.map, [], zone.position, player.position, room.activeVisionWalls)) continue;
       player.hp = Math.max(0, player.hp - 1);
       if (player.hp <= 0) {
         player.alive = false;
@@ -1247,8 +1315,8 @@ function resolveSensors(room: RoomState): void {
     for (const target of enemyPlayers(room, sensor.owner)) {
       if (!target.alive) continue;
       const seesTarget = sensor.kind === "camera"
-        ? pointInCone(sensor.position, sensor.angle, sensor.fov, sensor.range, target.position) && hasLineOfSightWithSmoke(room.map, room.smokes, sensor.position, target.position)
-        : distance(sensor.position, target.position) <= sensor.range && hasLineOfSightWithSmoke(room.map, room.smokes, sensor.position, target.position) && room.tick % 20 === 0;
+        ? pointInCone(sensor.position, sensor.angle, sensor.fov, sensor.range, target.position) && hasLineOfSightWithSmoke(room.map, room.smokes, sensor.position, target.position, room.activeVisionWalls)
+        : distance(sensor.position, target.position) <= sensor.range && hasLineOfSightWithSmoke(room.map, room.smokes, sensor.position, target.position, room.activeVisionWalls) && room.tick % 20 === 0;
       if (!seesTarget) continue;
       const confidence = sensor.kind === "camera" ? 0.82 : 0.55;
       const noise = sensor.kind === "motion" ? Math.sin(room.tick * 12.9898) * 18 : 0;
@@ -1266,11 +1334,11 @@ export function snapshotFor(room: RoomState, playerId: PlayerId): ServerSnapshot
   const debug = slot.debug;
   const visiblePlayers = enemyPlayers(room, playerId)
     .filter((opponent) => opponent.alive && isPointVisibleToPlayer(room, self, opponent.position))
-    .map((opponent) => ({ ...opponent, position: { ...opponent.position }, velocity: { ...opponent.velocity } }));
+    .map(clonePlayerState);
   const selfWeapon = createWeapon({ weaponId: self.weaponId });
-  const polygon = visibleConePolygonWithSmoke(room.map, room.smokes, self.position, self.aim, selfWeapon.visionFov, selfWeapon.visionRange, 54);
+  const polygon = visibleConePolygonWithSmoke(room.map, room.smokes, self.position, self.aim, selfWeapon.visionFov, selfWeapon.visionRange, NORMAL_VISION_RAYS, room.activeVisionWalls);
   slot.explored.push(...polygon.filter((_, index) => index % 8 === 0));
-  slot.explored = slot.explored.slice(-400);
+  if (slot.explored.length > MAX_EXPLORED_POINTS) slot.explored.splice(0, slot.explored.length - MAX_EXPLORED_POINTS);
   const visibleShotImpacts = room.shotImpacts.filter((impact) => {
     if (impact.shooter === playerId) return true;
     return isPointVisibleToPlayer(room, self, impact.origin) || isPointVisibleToPlayer(room, self, impact.end);
@@ -1285,7 +1353,7 @@ export function snapshotFor(room: RoomState, playerId: PlayerId): ServerSnapshot
     tick: room.tick,
     playerId,
     round: { ...room.round, scores: { ...room.round.scores } },
-    self: { ...self, position: { ...self.position }, velocity: { ...self.velocity } },
+    self: clonePlayerState(self),
     ...(slot.pendingLoadout ? { nextLoadout: structuredClone(slot.pendingLoadout) } : {}),
     visiblePlayers,
     detections: debug ? room.detections : room.detections.filter((detection) => detection.owner === playerId || isPointVisibleToPlayer(room, self, detection.position)),
@@ -1303,10 +1371,13 @@ export function snapshotFor(room: RoomState, playerId: PlayerId): ServerSnapshot
 
   if (debug) {
     snapshot.debug = {
-      players: Object.values(room.players),
+      players: room.playerList,
       detections: room.detections,
       visibleByPlayer: {
-        ...Object.fromEntries(Object.values(room.players).map((player) => [player.id, visibleConePolygonWithSmoke(room.map, room.smokes, player.position, player.aim, createWeapon({ weaponId: player.weaponId }).visionFov, createWeapon({ weaponId: player.weaponId }).visionRange, 48)]))
+        ...Object.fromEntries(room.playerList.map((player) => {
+          const weapon = createWeapon({ weaponId: player.weaponId });
+          return [player.id, visibleConePolygonWithSmoke(room.map, room.smokes, player.position, player.aim, weapon.visionFov, weapon.visionRange, DEBUG_VISION_RAYS, room.activeVisionWalls)];
+        }))
       } as Record<PlayerId, Vec2[]>
     };
   }
@@ -1314,10 +1385,10 @@ export function snapshotFor(room: RoomState, playerId: PlayerId): ServerSnapshot
 }
 
 function isPointVisibleToPlayer(room: RoomState, player: PlayerState, point: Vec2): boolean {
-  if (distance(player.position, point) <= PLAYER_CLOSE_VISION_RADIUS && hasLineOfSightWithSmoke(room.map, room.smokes, player.position, point)) return true;
+  if (distance(player.position, point) <= PLAYER_CLOSE_VISION_RADIUS && hasLineOfSightWithSmoke(room.map, room.smokes, player.position, point, room.activeVisionWalls)) return true;
   const weapon = createWeapon({ weaponId: player.weaponId });
-  if (hasConeLineOfSightWithSmoke(room.map, room.smokes, player.position, player.aim, weapon.visionFov, weapon.visionRange, point)) return true;
-  return room.deployedCameras.some((camera) => camera.owner === player.id && !camera.destroyed && distance(camera.position, point) <= camera.radius && hasLineOfSightWithSmoke(room.map, room.smokes, camera.position, point));
+  if (hasConeLineOfSightWithSmoke(room.map, room.smokes, player.position, player.aim, weapon.visionFov, weapon.visionRange, point, room.activeVisionWalls)) return true;
+  return room.deployedCameras.some((camera) => camera.owner === player.id && !camera.destroyed && distance(camera.position, point) <= camera.radius && hasLineOfSightWithSmoke(room.map, room.smokes, camera.position, point, room.activeVisionWalls));
 }
 
 function wallVisibleToPlayer(room: RoomState, player: PlayerState, wall: Wall): boolean {
@@ -1330,14 +1401,14 @@ function wallsForPlayer(room: RoomState, playerId: PlayerId): Wall[] {
   const slot = getSlot(room, playerId);
   return room.map.walls.flatMap((wall) => {
     if (wallVisibleToPlayer(room, player, wall)) {
-      const clone = structuredClone(wall);
+      const clone = cloneWall(wall);
       slot.lastSeenWalls.set(wall.id, clone);
       return [clone];
     }
     const lastSeen = slot.lastSeenWalls.get(wall.id);
-    if (lastSeen) return [structuredClone(lastSeen)];
+    if (lastSeen) return [cloneWall(lastSeen)];
     const authored = room.baseMap.walls.find((candidate) => candidate.id === wall.id);
-    return authored ? [structuredClone(authored)] : [];
+    return authored ? [cloneWall(authored)] : [];
   });
 }
 
@@ -1347,17 +1418,36 @@ function visibleCamerasFor(room: RoomState, playerId: PlayerId): DeployedCamera[
   const visible: DeployedCamera[] = [];
   for (const camera of room.deployedCameras) {
     if (camera.owner === playerId || isPointVisibleToPlayer(room, player, camera.position)) {
-      const clone = structuredClone(camera);
+      const clone = cloneCamera(camera);
       slot.lastSeenCameras.set(camera.id, clone);
       visible.push(clone);
       continue;
     }
     const lastSeen = slot.lastSeenCameras.get(camera.id);
-    if (lastSeen) visible.push(structuredClone(lastSeen));
+    if (lastSeen) visible.push(cloneCamera(lastSeen));
   }
   return visible;
 }
 
 function pushEvent(room: RoomState, event: AuthoritativeEvent): void {
-  room.replay.events.push(event);
+  pushBounded(room.replay.events, event, MAX_REPLAY_EVENTS);
+}
+
+function clonePlayerState(player: PlayerState): PlayerState {
+  return { ...player, position: { ...player.position }, velocity: { ...player.velocity }, gadgets: { ...player.gadgets }, gadgetLoadout: { ...player.gadgetLoadout } };
+}
+
+function cloneWall(wall: Wall): Wall {
+  return {
+    ...wall,
+    a: { ...wall.a },
+    b: { ...wall.b },
+    ...(wall.hinge ? { hinge: { ...wall.hinge } } : {}),
+    ...(wall.closedA ? { closedA: { ...wall.closedA } } : {}),
+    ...(wall.closedB ? { closedB: { ...wall.closedB } } : {})
+  };
+}
+
+function cloneCamera(camera: DeployedCamera): DeployedCamera {
+  return { ...camera, position: { ...camera.position } };
 }

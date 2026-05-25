@@ -1,5 +1,16 @@
 export const TICK_RATE = 60;
 export const TICK_MS = 1000 / TICK_RATE;
+export const SNAPSHOT_RATE_HZ = 60;
+export const SNAPSHOT_INTERVAL_TICKS = Math.max(1, Math.round(TICK_RATE / SNAPSHOT_RATE_HZ));
+export const MAX_SOCKET_BUFFERED_AMOUNT = 512 * 1024;
+export const MAX_REPLAY_COMMANDS = 900;
+export const MAX_REPLAY_EVENTS = 900;
+export const MAX_ANALYTICS_EVENTS = 600;
+export const ENABLE_MATCH_ANALYTICS = process.env.NODE_ENV !== "production";
+export const MAX_EXPLORED_POINTS = 400;
+export const MAX_ACTION_RESULTS = 32;
+export const NORMAL_VISION_RAYS = 54;
+export const DEBUG_VISION_RAYS = 48;
 export const PLAYER_WALK_SPEED = 160 / TICK_RATE;
 export const PLAYER_RADIUS = 10;
 export const PLAYER_MAX_HP = 5;

@@ -8,15 +8,16 @@ import {
   pointInCone,
   type MapDefinition,
   type SmokeZone,
-  type Vec2
+  type Vec2,
+  type Wall
 } from "@tac/shared";
 
 export function smokeBlocksSegment(smokes: SmokeZone[], from: Vec2, to: Vec2): boolean {
   return smokes.some((smoke) => smoke.expiresAtTick >= 0 && segmentCircleDistance(from, to, smoke.position) <= smoke.radius);
 }
 
-export function hasLineOfSightWithSmoke(map: MapDefinition, smokes: SmokeZone[], from: Vec2, to: Vec2): boolean {
-  return !smokeBlocksSegment(smokes, from, to) && hasLineOfSight(map, from, to);
+export function hasLineOfSightWithSmoke(map: MapDefinition, smokes: SmokeZone[], from: Vec2, to: Vec2, visionWalls = map.walls): boolean {
+  return !smokeBlocksSegment(smokes, from, to) && hasLineOfSightAgainstWalls(map, from, to, visionWalls);
 }
 
 export function hasConeLineOfSightWithSmoke(
@@ -26,30 +27,30 @@ export function hasConeLineOfSightWithSmoke(
   angle: number,
   fov: number,
   range: number,
-  point: Vec2
+  point: Vec2,
+  visionWalls?: Wall[]
 ): boolean {
-  return pointInCone(origin, angle, fov, range, point) && hasLineOfSightWithSmoke(map, smokes, origin, point);
+  return pointInCone(origin, angle, fov, range, point) && hasLineOfSightWithSmoke(map, smokes, origin, point, visionWalls);
 }
 
-export function visibleConePolygonWithSmoke(map: MapDefinition, smokes: SmokeZone[], origin: Vec2, angle: number, fov: number, range: number, rays = 48): Vec2[] {
+export function visibleConePolygonWithSmoke(map: MapDefinition, smokes: SmokeZone[], origin: Vec2, angle: number, fov: number, range: number, rays = 48, visionWalls = map.walls): Vec2[] {
   const points: Vec2[] = [origin];
   const start = angle - fov / 2;
   const steps = Math.max(2, rays);
   for (let index = 0; index <= steps; index += 1) {
     const rayAngle = start + (fov * index) / steps;
-    points.push(raycastWithSmoke(map, smokes, origin, rayAngle, range));
+    points.push(raycastWithSmoke(map, smokes, origin, rayAngle, range, visionWalls));
   }
   return points;
 }
 
-function raycastWithSmoke(map: MapDefinition, smokes: SmokeZone[], origin: Vec2, angle: number, range: number): Vec2 {
+function raycastWithSmoke(map: MapDefinition, smokes: SmokeZone[], origin: Vec2, angle: number, range: number, visionWalls: Wall[]): Vec2 {
   const direction = angleToVector(angle);
   const target = add(origin, mul(direction, range));
   let closest = target;
   let closestDistance = range;
 
-  for (const wall of map.walls) {
-    if (wall.destroyed || !wall.blocksVision) continue;
+  for (const wall of visionWalls) {
     const hit = lineIntersection(origin, target, wall.a, wall.b);
     if (!hit) continue;
     const hitDistance = distance(origin, hit);
@@ -68,6 +69,11 @@ function raycastWithSmoke(map: MapDefinition, smokes: SmokeZone[], origin: Vec2,
   }
 
   return closest;
+}
+
+function hasLineOfSightAgainstWalls(map: MapDefinition, from: Vec2, to: Vec2, visionWalls: Wall[]): boolean {
+  if (visionWalls === map.walls) return hasLineOfSight(map, from, to);
+  return !visionWalls.some((wall) => lineIntersection(from, to, wall.a, wall.b));
 }
 
 function rayCircleIntersectionDistance(origin: Vec2, direction: Vec2, center: Vec2, radius: number, maxDistance: number): number | null {

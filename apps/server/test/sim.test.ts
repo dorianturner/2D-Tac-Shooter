@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { createWall, distanceToSegment, type MapDefinition } from "@tac/shared";
-import { applyClientMessage, createRoom, isExpiredUnfilledLobby, joinRoom, snapshotFor, stepRoom } from "../src/sim.js";
-import { OBJECTIVE_CAPTURE_TICKS, ROUND_TICKS } from "../src/sim/config.js";
+import { applyClientMessage, createRoom, isExpiredUnfilledLobby, joinRoom, refreshGeometryCaches, snapshotFor, stepRoom } from "../src/sim.js";
+import { MAX_ANALYTICS_EVENTS, MAX_REPLAY_COMMANDS, MAX_REPLAY_EVENTS, OBJECTIVE_CAPTURE_TICKS, ROUND_TICKS } from "../src/sim/config.js";
 
 describe("authoritative simulation", () => {
   it("filters hidden opponents out of snapshots", () => {
@@ -19,6 +19,7 @@ describe("authoritative simulation", () => {
     joinRoom(room, false, "p1");
     joinRoom(room, false, "p2");
     room.map.walls = room.map.walls.map((wall) => wall.id.includes("mid") || wall.id === "breach-panel" ? { ...wall, destroyed: true } : wall);
+    refreshGeometryCaches(room);
     room.players.p2.position = { x: 360, y: 320 };
     for (let i = 0; i < 61; i += 1) stepRoom(room);
     expect(snapshotFor(room, "p1").visiblePlayers[0]?.id).toBe("p2");
@@ -1103,6 +1104,64 @@ describe("authoritative simulation", () => {
     expect(room.map.walls.find((wall) => wall.id === "custom-panel")?.destroyed).not.toBe(true);
     for (let i = 0; i < 7; i += 1) stepRoom(room);
     expect(room.map.walls.find((wall) => wall.id === "custom-panel")?.destroyed).toBe(true);
+  });
+
+  it("bounds replay and analytics buffers while keeping newest entries", () => {
+    const room = activeRoom(testMap());
+    for (let seq = 1; seq <= MAX_REPLAY_COMMANDS + 25; seq += 1) {
+      applyClientMessage(room, "p1", { type: "command", seq, tick: room.tick, move: { x: 0, y: 0 }, aim: 0, fire: false, use: "none" });
+    }
+    expect(room.replay.commands).toHaveLength(MAX_REPLAY_COMMANDS);
+    expect(room.replay.commands[0]?.seq).toBe(26);
+
+    for (let i = 0; i < MAX_REPLAY_EVENTS + 20; i += 1) {
+      applyClientMessage(room, "p1", { type: "command", seq: 10_000 + i, tick: room.tick, move: { x: 0, y: 0 }, aim: 0, fire: true, use: "none" });
+      stepRoom(room);
+    }
+    expect(room.replay.events.length).toBeLessThanOrEqual(MAX_REPLAY_EVENTS);
+    expect(room.analytics.length).toBeLessThanOrEqual(MAX_ANALYTICS_EVENTS);
+  });
+
+  it("refreshes active geometry caches after destruction, deployable placement, and round reset", () => {
+    const map = testMap();
+    map.walls.push(createWall("breakable-cache", "solid", { x: 110, y: 80 }, { x: 110, y: 160 }, 8, { destructible: true, maxHp: 1 }));
+    const room = activeRoom(map);
+    expect(room.activeShootingWalls.some((wall) => wall.id === "breakable-cache")).toBe(true);
+
+    applyClientMessage(room, "p1", { type: "command", seq: 1, tick: room.tick, move: { x: 0, y: 0 }, aim: 0, fire: true, use: "none" });
+    stepRoom(room);
+    expect(room.map.walls.find((wall) => wall.id === "breakable-cache")?.destroyed).toBe(true);
+    expect(room.activeShootingWalls.some((wall) => wall.id === "breakable-cache")).toBe(false);
+    expect(room.activeMovementWalls.some((wall) => wall.id === "breakable-cache")).toBe(false);
+
+    applyClientMessage(room, "p1", { type: "command", seq: 2, tick: room.tick, move: { x: 0, y: 0 }, aim: 0, fire: false, use: "none", gadget: "wall", gadgetTarget: { x: 90, y: 150 }, gadgetAngle: 0 });
+    stepRoom(room);
+    expect(room.activeMovementWalls.some((wall) => wall.id.includes("-wall-"))).toBe(true);
+
+    for (let i = 0; i < 25; i += 1) stepRoom(room);
+    shootUntilRoundEnds(room);
+    expect(room.activeMovementWalls.some((wall) => wall.id.includes("-wall-"))).toBe(false);
+    expect(room.activeShootingWalls.some((wall) => wall.id === "breakable-cache")).toBe(true);
+  });
+
+  it("skips full gameplay stepping while a room is waiting in lobby", () => {
+    const room = createRoom("idle-lobby", testMap());
+    joinRoom(room, false, "p1");
+    applyClientMessage(room, "p1", { type: "command", seq: 1, tick: room.tick, move: { x: 1, y: 0 }, aim: 0, fire: false, use: "none", reload: true });
+    stepRoom(room);
+    expect(room.round.phase).toBe("lobby");
+    expect(room.players.p1.position).toEqual({ x: 50, y: 120 });
+    expect(snapshotFor(room, "p1").actionResults).toContainEqual({ seq: 1, action: "reload", accepted: false, reason: "round-inactive" });
+  });
+
+  it("steps many concurrent rooms without unbounded runtime growth", () => {
+    const rooms = Array.from({ length: 48 }, (_, index) => activeRoomWithLoadout(testMap(), { weaponId: index % 2 === 0 ? "assault" : "shotgun" }));
+    for (let tick = 0; tick < 180; tick += 1) {
+      for (const room of rooms) stepRoom(room);
+    }
+    expect(rooms.every((room) => room.replay.commands.length <= MAX_REPLAY_COMMANDS)).toBe(true);
+    expect(rooms.every((room) => room.replay.events.length <= MAX_REPLAY_EVENTS)).toBe(true);
+    expect(rooms.every((room) => room.analytics.length <= MAX_ANALYTICS_EVENTS)).toBe(true);
   });
 
   it("requires both players to request a rematch before resetting scores", () => {

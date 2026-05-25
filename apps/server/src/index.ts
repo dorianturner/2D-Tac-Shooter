@@ -7,6 +7,7 @@ import type { ClientHello, ClientMessage, PlayerId, RoomSummary, ServerMessage }
 import { handleCorsPreflight } from "./cors.js";
 import { listMaps, readMap, writeMap } from "./mapStore.js";
 import { applyClientMessage, createRoom, isExpiredUnfilledLobby, joinRoom, snapshotFor, stepRoom, TICK_MS, type RoomState } from "./sim.js";
+import { MAX_SOCKET_BUFFERED_AMOUNT, SNAPSHOT_INTERVAL_TICKS } from "./sim/config.js";
 
 const PORT = Number(process.env.PORT ?? 8787);
 const clientDist = resolve(process.cwd(), "apps/client/dist");
@@ -14,6 +15,10 @@ const rooms = new Map<string, RoomState>();
 const sockets = new Map<WebSocket, { roomId: string; playerId: PlayerId }>();
 const reconnect = new Map<string, { roomId: string; playerId: PlayerId }>();
 let simulationTimer: ReturnType<typeof setInterval> | undefined;
+let serverTick = 0;
+let lastTickDurationMs = 0;
+let averageTickDurationMs = 0;
+const staticFileCache = new Map<string, string | null>();
 
 const server = createServer((request, response) => {
   void handleHttp(request, response);
@@ -62,16 +67,31 @@ function stopSimulationLoopIfIdle(): void {
 }
 
 function runSimulationTick(): void {
+  const startedAt = performance.now();
+  serverTick += 1;
   cleanupExpiredRooms();
   for (const room of rooms.values()) {
     stepRoom(room);
   }
   cleanupEndedRooms();
-  for (const [socket, session] of sockets.entries()) {
-    const room = rooms.get(session.roomId);
-    if (!room || socket.readyState !== socket.OPEN) continue;
-    send(socket, snapshotFor(room, session.playerId));
+  if (serverTick % SNAPSHOT_INTERVAL_TICKS !== 0) {
+    recordTickDuration(startedAt);
+    stopSimulationLoopIfIdle();
+    return;
   }
+  const socketsByRoom = new Map<string, Array<[WebSocket, PlayerId]>>();
+  for (const [socket, session] of sockets.entries()) {
+    if (socket.readyState !== socket.OPEN || !shouldSendSnapshot(socket)) continue;
+    const group = socketsByRoom.get(session.roomId);
+    if (group) group.push([socket, session.playerId]);
+    else socketsByRoom.set(session.roomId, [[socket, session.playerId]]);
+  }
+  for (const [roomId, group] of socketsByRoom.entries()) {
+    const room = rooms.get(roomId);
+    if (!room) continue;
+    for (const [socket, playerId] of group) send(socket, snapshotFor(room, playerId));
+  }
+  recordTickDuration(startedAt);
   stopSimulationLoopIfIdle();
 }
 
@@ -90,7 +110,7 @@ async function handleHttp(request: import("node:http").IncomingMessage, response
       return;
     }
     if (request.method === "GET" && url.pathname === "/api/health") {
-      sendJson(response, 200, { ok: true, uptimeSeconds: Math.round(process.uptime()), rooms: rooms.size });
+      sendJson(response, 200, healthPayload());
       return;
     }
     if (request.method === "GET" && url.pathname === "/api/rooms") {
@@ -125,7 +145,7 @@ async function sendStaticClient(response: import("node:http").ServerResponse, pa
     sendJson(response, 404, { error: "Not found" });
     return;
   }
-  response.writeHead(200, { "Content-Type": contentType(filePath) });
+  response.writeHead(200, staticHeaders(filePath));
   if (headOnly) {
     response.end();
     return;
@@ -134,13 +154,31 @@ async function sendStaticClient(response: import("node:http").ServerResponse, pa
 }
 
 async function staticFileForPath(pathname: string): Promise<string | null> {
+  const cached = staticFileCache.get(pathname);
+  if (cached !== undefined) return cached;
   const decoded = decodeURIComponent(pathname);
   const requested = normalize(decoded).replace(/^(\.\.(\/|\\|$))+/, "");
   const filePath = resolve(clientDist, requested === "/" ? "index.html" : requested.slice(1));
-  if (!filePath.startsWith(clientDist)) return null;
-  if (await isFile(filePath)) return filePath;
+  if (!filePath.startsWith(clientDist)) {
+    staticFileCache.set(pathname, null);
+    return null;
+  }
+  if (await isFile(filePath)) {
+    staticFileCache.set(pathname, filePath);
+    return filePath;
+  }
   const indexPath = join(clientDist, "index.html");
-  return await isFile(indexPath) ? indexPath : null;
+  const resolvedIndex = await isFile(indexPath) ? indexPath : null;
+  staticFileCache.set(pathname, resolvedIndex);
+  return resolvedIndex;
+}
+
+function staticHeaders(filePath: string): Record<string, string> {
+  const immutableAsset = filePath.includes(`${clientDist}/assets/`);
+  return {
+    "Content-Type": contentType(filePath),
+    "Cache-Control": immutableAsset ? "public, max-age=31536000, immutable" : "no-cache"
+  };
 }
 
 async function isFile(filePath: string): Promise<boolean> {
@@ -184,8 +222,26 @@ function readBody(request: import("node:http").IncomingMessage): Promise<string>
 }
 
 function sendJson(response: import("node:http").ServerResponse, status: number, value: unknown): void {
-  response.writeHead(status, { "Content-Type": "application/json" });
+  response.writeHead(status, { "Content-Type": "application/json", "Cache-Control": "no-store" });
   response.end(JSON.stringify(value));
+}
+
+function healthPayload(): Record<string, unknown> {
+  const heap = process.memoryUsage().heapUsed / (1024 * 1024);
+  return {
+    ok: true,
+    uptimeSeconds: Math.round(process.uptime()),
+    rooms: rooms.size,
+    activeRooms: [...rooms.values()].filter((room) => room.round.phase === "active" || room.round.phase === "overtime").length,
+    sockets: sockets.size,
+    heapUsedMb: Math.round(heap * 10) / 10,
+    tick: {
+      rateHz: Math.round(1000 / TICK_MS),
+      snapshotRateHz: Math.round(1000 / (TICK_MS * SNAPSHOT_INTERVAL_TICKS)),
+      lastDurationMs: Math.round(lastTickDurationMs * 1000) / 1000,
+      averageDurationMs: Math.round(averageTickDurationMs * 1000) / 1000
+    }
+  };
 }
 
 async function handleHello(socket: WebSocket, hello: ClientHello): Promise<void> {
@@ -237,8 +293,8 @@ function listRooms(): RoomSummary[] {
       id: room.id,
       mapId: room.map.id,
       mapName: room.map.name,
-      playerCount: Object.values(room.slots).filter((slot) => slot.connected).length,
-      maxPlayers: Object.keys(room.slots).length,
+      playerCount: room.slotList.filter((slot) => slot.connected).length,
+      maxPlayers: room.slotList.length,
       phase: room.round.phase
     }));
 }
@@ -288,4 +344,13 @@ function parseMessage(raw: string): ClientMessage | null {
 
 function send(socket: WebSocket, message: ServerMessage): void {
   socket.send(JSON.stringify(message));
+}
+
+function shouldSendSnapshot(socket: WebSocket): boolean {
+  return socket.bufferedAmount <= MAX_SOCKET_BUFFERED_AMOUNT;
+}
+
+function recordTickDuration(startedAt: number): void {
+  lastTickDurationMs = performance.now() - startedAt;
+  averageTickDurationMs = averageTickDurationMs === 0 ? lastTickDurationMs : averageTickDurationMs * 0.95 + lastTickDurationMs * 0.05;
 }
