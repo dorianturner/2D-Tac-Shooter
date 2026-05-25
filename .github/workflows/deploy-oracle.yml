@@ -86,25 +86,46 @@ jobs:
             sleep 3
           done
 
-          ssh -F ~/.ssh/config -o BatchMode=yes -o ConnectTimeout=15 oracle "echo ssh-ready"
         env:
           ORACLE_SSH_PRIVATE_KEY: ${{ secrets.ORACLE_SSH_PRIVATE_KEY }}
 
+      - name: Check Oracle SSH availability
+        id: ssh-preflight
+        run: |
+          set -euo pipefail
+          available=false
+          for attempt in 1 2 3 4 5 6; do
+            if timeout 25 ssh -F ~/.ssh/config -o BatchMode=yes -o ConnectTimeout=20 oracle "echo ssh-ready"; then
+              available=true
+              break
+            fi
+            echo "::warning::Oracle SSH preflight attempt ${attempt} failed"
+            sleep 10
+          done
+          echo "available=${available}" >> "${GITHUB_OUTPUT}"
+          if [[ "${available}" != "true" ]]; then
+            echo "::warning::Oracle SSH is not responding. Build/test passed, but deployment is skipped until the VM accepts SSH again."
+          fi
+
       - name: Prepare remote directories
+        if: steps.ssh-preflight.outputs.available == 'true'
         run: |
           ssh -F ~/.ssh/config oracle \
             "sudo mkdir -p /opt/tac-shooter && sudo chown -R ${ORACLE_USER}:${ORACLE_USER} /opt/tac-shooter"
 
       - name: Upload release archive
+        if: steps.ssh-preflight.outputs.available == 'true'
         run: |
           scp -F ~/.ssh/config "/tmp/tac-shooter-${RELEASE}.tar.gz" oracle:/tmp/tac-shooter-${RELEASE}.tar.gz
 
       - name: Deploy release
+        if: steps.ssh-preflight.outputs.available == 'true'
         run: |
           ssh -F ~/.ssh/config oracle \
             "GITHUB_SHA=${RELEASE} bash -s" < scripts/deploy-oracle.sh
 
       - name: Smoke test
+        if: steps.ssh-preflight.outputs.available == 'true'
         run: |
           set -euo pipefail
           ssh -F ~/.ssh/config oracle \
@@ -117,3 +138,9 @@ jobs:
           echo "::warning::Remote service is healthy over SSH, but public HTTP smoke check failed. Check OCI ingress/security-list rules for TCP/80."
           ssh -F ~/.ssh/config oracle \
             "echo ===SERVICE===; sudo systemctl --no-pager --lines=80 status tac-shooter || true; echo ===PORTS===; sudo ss -ltnp | grep ':80' || true; echo ===FIREWALL===; (sudo firewall-cmd --list-all || true); (sudo iptables -S INPUT || true)"
+
+      - name: Deployment skipped
+        if: steps.ssh-preflight.outputs.available != 'true'
+        run: |
+          echo "Oracle SSH did not become available during this run."
+          echo "The package built successfully, but the VM likely needs reboot/recovery before deployment can resume."
