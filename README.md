@@ -2,7 +2,7 @@
 
 Competitive 2D tactical shooter prototype focused on temporary information control, repositioning, deception, and environmental adaptation.
 
-Current public url http://145.241.210.33/
+Current public url https://145-241-210-33.nip.io/
 
 ## Local Development
 
@@ -25,7 +25,7 @@ Open two browser tabs at the Vite URL, join the same local room, and play the Pr
 
 ## Deployment
 
-The `Deploy Oracle` GitHub Action deploys `main` to `http://145.241.210.33/`.
+The `Deploy Oracle` GitHub Action deploys `main` to `https://145-241-210-33.nip.io/`.
 
 Required repository secrets:
 

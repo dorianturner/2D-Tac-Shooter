@@ -10,6 +10,7 @@ import { applyClientMessage, createRoom, isExpiredUnfilledLobby, joinRoom, snaps
 import { MAX_SOCKET_BUFFERED_AMOUNT, SNAPSHOT_INTERVAL_TICKS } from "./sim/config.js";
 
 const PORT = Number(process.env.PORT ?? 8787);
+const HOST = process.env.HOST ?? "0.0.0.0";
 const clientDist = resolve(process.cwd(), "apps/client/dist");
 const rooms = new Map<string, RoomState>();
 const sockets = new Map<WebSocket, { roomId: string; playerId: PlayerId }>();
@@ -95,9 +96,9 @@ function runSimulationTick(): void {
   stopSimulationLoopIfIdle();
 }
 
-server.listen(PORT, () => {
-  console.log(`Authoritative tactical server listening on ws://localhost:${PORT}`);
-  console.log(`Map editor API listening on http://localhost:${PORT}/api/maps`);
+server.listen(PORT, HOST, () => {
+  console.log(`Authoritative tactical server listening on ws://${HOST}:${PORT}`);
+  console.log(`Map editor API listening on http://${HOST}:${PORT}/api/maps`);
 });
 
 async function handleHttp(request: import("node:http").IncomingMessage, response: import("node:http").ServerResponse): Promise<void> {

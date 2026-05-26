@@ -21,13 +21,15 @@ mkdir -p \
   "${TMP}/apps/client" \
   "${TMP}/packages/shared" \
   "${TMP}/maps" \
-  "${TMP}/ops/systemd"
+  "${TMP}/ops/systemd" \
+  "${TMP}/ops/caddy"
 
 cp -R apps/server/dist "${TMP}/apps/server/dist"
 cp -R apps/client/dist "${TMP}/apps/client/dist"
 cp -R packages/shared/dist "${TMP}/packages/shared/dist"
 cp -R maps/. "${TMP}/maps/"
 cp ops/systemd/tac-shooter.service "${TMP}/ops/systemd/tac-shooter.service"
+cp ops/caddy/Caddyfile "${TMP}/ops/caddy/Caddyfile"
 
 cat > "${TMP}/package.json" <<'JSON'
 {

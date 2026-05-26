@@ -7,6 +7,7 @@ SERVICE_NAME="${SERVICE_NAME:-tac-shooter}"
 ARCHIVE="/tmp/tac-shooter-${RELEASE}.tar.gz"
 RELEASE_DIR="${APP_DIR}/releases/${RELEASE}"
 NODE_VERSION="${NODE_VERSION:-22}"
+APP_PORT="${APP_PORT:-8787}"
 
 NODE_ARCH="$(uname -m)"
 case "${NODE_ARCH}" in
@@ -50,6 +51,19 @@ if [ ! -f apps/client/dist/index.html ]; then
 fi
 
 sudo cp ops/systemd/tac-shooter.service "/etc/systemd/system/${SERVICE_NAME}.service"
+if [ -f ops/caddy/Caddyfile ]; then
+  if ! command -v caddy >/dev/null 2>&1; then
+    sudo dnf -y install dnf-plugins-core
+    sudo dnf -y copr enable @caddy/caddy
+    sudo dnf -y install caddy
+  fi
+  sudo mkdir -p /etc/caddy
+  sudo cp ops/caddy/Caddyfile /etc/caddy/Caddyfile
+  sudo firewall-cmd --permanent --add-service=http >/dev/null 2>&1 || true
+  sudo firewall-cmd --permanent --add-service=https >/dev/null 2>&1 || true
+  sudo firewall-cmd --reload >/dev/null 2>&1 || true
+  sudo systemctl enable caddy
+fi
 sudo rm -f /etc/nginx/conf.d/tac-shooter.conf
 sudo systemctl daemon-reload
 sudo systemctl enable "${SERVICE_NAME}"
@@ -57,8 +71,11 @@ sudo systemctl enable "${SERVICE_NAME}"
 ln -sfn "${RELEASE_DIR}" "${APP_DIR}/current"
 
 sudo systemctl restart "${SERVICE_NAME}"
+if command -v caddy >/dev/null 2>&1 && [ -f /etc/caddy/Caddyfile ]; then
+  sudo systemctl restart caddy
+fi
 for attempt in $(seq 1 20); do
-  if curl -fsS --max-time 3 http://127.0.0.1/api/health >/dev/null; then
+  if curl -fsS --max-time 3 "http://127.0.0.1:${APP_PORT}/api/health" >/dev/null; then
     sudo systemctl --no-pager --lines=40 status "${SERVICE_NAME}"
     exit 0
   fi
