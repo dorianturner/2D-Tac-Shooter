@@ -13,23 +13,19 @@ export class PreloadScene extends Phaser.Scene {
   preload(): void {
     for (const asset of imageAssetList) {
       if (!asset.path) continue;
-      this.load.image(shouldNormalizeTextureAsset(asset) ? sourceTextureKey(asset) : asset.key, asset.path);
+      this.load.image(sourceTextureKey(asset), asset.path);
     }
   }
 
   create(): void {
     normalizePlayerTexture(this, imageAssets.playerBlue);
     normalizePlayerTexture(this, imageAssets.playerOrange);
-    normalizeCroppedTexture(this, imageAssets.weaponAssault);
-    normalizeCroppedTexture(this, imageAssets.weaponSniper);
-    normalizeCroppedTexture(this, imageAssets.weaponShotgun);
+    for (const asset of imageAssetList) {
+      if (asset.id !== "playerBlue" && asset.id !== "playerOrange") normalizeCroppedTexture(this, asset);
+    }
     createFallbackTextures(this);
     this.scene.start(this.nextScene);
   }
-}
-
-function shouldNormalizeTextureAsset(asset: ImageAssetDefinition): boolean {
-  return asset.id === "playerBlue" || asset.id === "playerOrange" || asset.id === "weaponAssault" || asset.id === "weaponSniper" || asset.id === "weaponShotgun";
 }
 
 function sourceTextureKey(asset: ImageAssetDefinition): string {

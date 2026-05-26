@@ -2,7 +2,7 @@
 
 Competitive 2D tactical shooter prototype focused on temporary information control, repositioning, deception, and environmental adaptation.
 
-Current public url http://141.147.85.169/
+Current public url http://145.241.210.33/
 
 ## Local Development
 
@@ -22,6 +22,19 @@ Open two browser tabs at the Vite URL, join the same local room, and play the Pr
 - `npm run typecheck` - typecheck every workspace.
 - `npm test` - run unit and integration tests.
 - `npm run build` - build all workspaces.
+
+## Deployment
+
+The `Deploy Oracle` GitHub Action deploys `main` to `http://145.241.210.33/`.
+
+Required repository secrets:
+
+- `ORACLE_HOST` - `145.241.210.33`
+- `ORACLE_USER` - `opc`
+- `ORACLE_SSH_PRIVATE_KEY` - the full private key contents from `~/.ssh/tacbox.key`
+- `ORACLE_PORT` - optional, defaults to `22`
+
+Run it by pushing to `main`, or manually from GitHub Actions with `Deploy Oracle` -> `Run workflow`.
 
 ## Prototype 1
 

@@ -1,13 +1,11 @@
 import Phaser from "phaser";
-import { segmentPreset, type DeployedCamera, type MolotovZone, type PlayerId, type ServerSnapshot, type SmokeZone, type SoundSensorZone, type Vec2, type Wall } from "@tac/shared";
-import { imageAssets, weaponSpriteAssets } from "./assets";
+import { segmentPreset, type DeployedCamera, type MolotovZone, type PlayerId, type ServerSnapshot, type SmokeZone, type SoundSensorZone, type Vec2, type Wall, type WeaponPresetId } from "@tac/shared";
+import { fxSpriteAssets, gadgetSpriteAssets, imageAssets, playerSpriteAssets, weaponSpriteAssets } from "./assets";
 
 interface RenderedPlayer {
   position: Vec2;
   aim: number;
 }
-
-const PLAYER_SPRITE_WORLD_SIZE = 40;
 
 export class PlaySpritePresenter {
   private readonly players = new Map<PlayerId, Phaser.GameObjects.Image>();
@@ -37,7 +35,7 @@ export class PlaySpritePresenter {
       image.setPosition(rendered.position.x, rendered.position.y);
       image.setRotation(rendered.aim);
       image.setAlpha(player.id === snapshot.playerId ? 1 : 0.86);
-      setMaxWorldSize(image, PLAYER_SPRITE_WORLD_SIZE);
+      setMaxWorldSize(image, playerSpriteAssets.worldSize);
       this.renderWeapon(player.id, player.weaponId, rendered, player.id === snapshot.playerId);
     }
     pruneMissing(this.players, live);
@@ -47,8 +45,7 @@ export class PlaySpritePresenter {
   private renderWeapon(playerId: PlayerId, weaponId: keyof typeof weaponSpriteAssets, rendered: RenderedPlayer, isSelf: boolean): void {
     const config = weaponSpriteAssets[weaponId] ?? weaponSpriteAssets.assault;
     const image = upsertImage(this.scene, this.weapons, playerId, config.asset.key, 43);
-    const x = rendered.position.x + Math.cos(rendered.aim) * config.offsetX;
-    const y = rendered.position.y + Math.sin(rendered.aim) * config.offsetX;
+    const { x, y } = pointAlongAim(rendered.position, rendered.aim, config.offsetX);
     image.setPosition(x, y);
     image.setRotation(rendered.aim);
     image.setAlpha(isSelf ? 1 : 0.88);
@@ -68,10 +65,10 @@ export class PlaySpritePresenter {
   private renderCamera(camera: DeployedCamera, playerId: PlayerId, live: Set<string>): void {
     const id = `camera:${camera.id}`;
     live.add(id);
-    const image = upsertImage(this.scene, this.gadgets, id, imageAssets.camera.key, 41);
+    const image = upsertImage(this.scene, this.gadgets, id, gadgetSpriteAssets.camera.asset.key, 41);
     image.setPosition(camera.position.x, camera.position.y);
     image.setRotation(0);
-    image.setScale(0.5);
+    setMaxWorldSize(image, gadgetSpriteAssets.camera.worldSize);
     image.setAlpha(camera.destroyed ? 0.35 : camera.owner === playerId ? 1 : 0.68);
   }
 
@@ -79,10 +76,10 @@ export class PlaySpritePresenter {
     const id = `sound:${sensor.id}`;
     live.add(id);
     const triggered = (sensor.triggeredUntilTick ?? 0) >= tick;
-    const image = upsertImage(this.scene, this.gadgets, id, imageAssets.soundSensor.key, 41);
+    const image = upsertImage(this.scene, this.gadgets, id, gadgetSpriteAssets.soundSensor.asset.key, 41);
     image.setPosition(sensor.position.x, sensor.position.y);
     image.setRotation(0);
-    image.setScale(triggered ? 0.52 : 0.48);
+    setMaxWorldSize(image, gadgetSpriteAssets.soundSensor.worldSize * (triggered ? 1.12 : 1));
     image.setAlpha(triggered ? 0.9 : 0.75);
   }
 
@@ -92,7 +89,7 @@ export class PlaySpritePresenter {
     const image = upsertImage(this.scene, this.gadgets, id, key, 39);
     image.setPosition(zone.position.x, zone.position.y);
     image.setRotation(0);
-    image.setScale(Math.max(0.6, zone.radius / 32));
+    setMaxWorldSize(image, key === gadgetSpriteAssets.smoke.asset.key ? gadgetSpriteAssets.smoke.worldSize : gadgetSpriteAssets.molotov.worldSize);
     image.setAlpha(alpha);
   }
 
@@ -110,13 +107,20 @@ export class PlaySpritePresenter {
 }
 
 export function playImpactSprite(scene: Phaser.Scene, position: Vec2): void {
-  const image = scene.add.image(position.x, position.y, imageAssets.bulletImpact.key).setDepth(61).setScale(0.45).setAlpha(0.9);
+  const image = scene.add.image(position.x, position.y, fxSpriteAssets.bulletImpact.asset.key).setDepth(61).setAlpha(0.9);
+  setMaxWorldSize(image, fxSpriteAssets.bulletImpact.worldSize);
   scene.tweens.add({ targets: image, alpha: 0, scale: 0.8, duration: 140, onComplete: () => image.destroy() });
 }
 
 export function playMuzzleFlashSprite(scene: Phaser.Scene, origin: Vec2, aim: number): void {
-  const image = scene.add.image(origin.x + Math.cos(aim) * 18, origin.y + Math.sin(aim) * 18, imageAssets.muzzleFlash.key).setDepth(60).setRotation(aim).setScale(0.42).setAlpha(0.9);
+  const image = scene.add.image(origin.x, origin.y, fxSpriteAssets.muzzleFlash.asset.key).setDepth(60).setRotation(aim).setAlpha(0.9);
+  setWorldWidth(image, fxSpriteAssets.muzzleFlash.worldLength);
   scene.tweens.add({ targets: image, alpha: 0, scale: 0.72, duration: 90, onComplete: () => image.destroy() });
+}
+
+export function muzzleWorldPoint(position: Vec2, aim: number, weaponId: WeaponPresetId): Vec2 {
+  const config = weaponSpriteAssets[weaponId] ?? weaponSpriteAssets.assault;
+  return pointAlongAim(position, aim, config.muzzleOffsetX);
 }
 
 function upsertImage<T extends string>(scene: Phaser.Scene, map: Map<T, Phaser.GameObjects.Image>, id: T, key: string, depth: number): Phaser.GameObjects.Image {
@@ -148,4 +152,8 @@ function setMaxWorldSize(image: Phaser.GameObjects.Image, size: number): void {
 
 function setWorldWidth(image: Phaser.GameObjects.Image, width: number): void {
   image.setScale(width / Math.max(image.width, 1));
+}
+
+function pointAlongAim(position: Vec2, aim: number, offset: number): Vec2 {
+  return { x: position.x + Math.cos(aim) * offset, y: position.y + Math.sin(aim) * offset };
 }

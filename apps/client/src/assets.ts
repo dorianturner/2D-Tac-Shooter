@@ -60,12 +60,14 @@ export const imageAssets: Record<ImageAssetId, ImageAssetDefinition> = {
   camera: {
     id: "camera",
     key: "sprite.gadget.camera",
+    path: "/assets/sprites/camera.png",
     examplePath: "/assets/sprites/camera.png",
     recommended: "Transparent PNG, 48x48, readable camera marker."
   },
   soundSensor: {
     id: "soundSensor",
     key: "sprite.gadget.sound-sensor",
+    path: "/assets/sprites/sound-sensor.png",
     examplePath: "/assets/sprites/sound-sensor.png",
     recommended: "Transparent PNG, 48x48, readable sound sensor marker."
   },
@@ -103,20 +105,60 @@ export const imageAssets: Record<ImageAssetId, ImageAssetDefinition> = {
 
 export const imageAssetList = Object.values(imageAssets);
 
+export const playerSpriteAssets = {
+  worldSize: 40
+} as const;
+
 export const weaponSpriteAssets = {
   assault: {
     asset: imageAssets.weaponAssault,
     worldLength: 34,
-    offsetX: 25
+    offsetX: 25,
+    muzzleOffsetX: 42
   },
   sniper: {
     asset: imageAssets.weaponSniper,
     worldLength: 60,
-    offsetX: 35
+    offsetX: 35,
+    muzzleOffsetX: 65
   },
   shotgun: {
     asset: imageAssets.weaponShotgun,
     worldLength: 38,
-    offsetX: 25
+    offsetX: 25,
+    muzzleOffsetX: 44
+  }
+} as const;
+
+export const gadgetSpriteAssets = {
+  camera: {
+    asset: imageAssets.camera,
+    worldSize: 18
+  },
+  soundSensor: {
+    asset: imageAssets.soundSensor,
+    worldSize: 20
+  },
+  molotov: {
+    asset: imageAssets.molotov,
+    worldSize: 42
+  },
+  smoke: {
+    asset: imageAssets.smoke,
+    worldSize: 56
+  },
+  deployableWall: {
+    asset: imageAssets.deployableWall
+  }
+} as const;
+
+export const fxSpriteAssets = {
+  muzzleFlash: {
+    asset: imageAssets.muzzleFlash,
+    worldLength: 24
+  },
+  bulletImpact: {
+    asset: imageAssets.bulletImpact,
+    worldSize: 18
   }
 } as const;

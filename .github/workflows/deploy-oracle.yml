@@ -14,7 +14,7 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
     env:
-      ORACLE_HOST: ${{ secrets.ORACLE_HOST || '141.147.85.169' }}
+      ORACLE_HOST: ${{ secrets.ORACLE_HOST || '145.241.210.33' }}
       ORACLE_USER: ${{ secrets.ORACLE_USER || 'opc' }}
       ORACLE_PORT: ${{ secrets.ORACLE_PORT || '22' }}
       RELEASE: ${{ github.sha }}

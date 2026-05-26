@@ -8,10 +8,24 @@ ARCHIVE="/tmp/tac-shooter-${RELEASE}.tar.gz"
 RELEASE_DIR="${APP_DIR}/releases/${RELEASE}"
 NODE_VERSION="${NODE_VERSION:-22}"
 
+NODE_ARCH="$(uname -m)"
+case "${NODE_ARCH}" in
+  x86_64 | amd64)
+    NODE_DIST_ARCH="x64"
+    ;;
+  aarch64 | arm64)
+    NODE_DIST_ARCH="arm64"
+    ;;
+  *)
+    echo "Unsupported Node architecture: ${NODE_ARCH}" >&2
+    exit 1
+    ;;
+esac
+
 if ! command -v node >/dev/null 2>&1 || ! node --version | grep -q "^v${NODE_VERSION}\\."; then
-  NODE_TARBALL="$(curl -fsSL "https://nodejs.org/dist/latest-v${NODE_VERSION}.x/SHASUMS256.txt" | awk '/linux-x64.tar.xz$/ {print $2; exit}')"
+  NODE_TARBALL="$(curl -fsSL "https://nodejs.org/dist/latest-v${NODE_VERSION}.x/SHASUMS256.txt" | awk -v arch="linux-${NODE_DIST_ARCH}.tar.xz" '$2 ~ arch {print $2; exit}')"
   if [ -z "${NODE_TARBALL}" ]; then
-    echo "Unable to determine latest Node ${NODE_VERSION}.x linux-x64 tarball" >&2
+    echo "Unable to determine latest Node ${NODE_VERSION}.x linux-${NODE_DIST_ARCH} tarball" >&2
     exit 1
   fi
   curl -fsSLo "/tmp/${NODE_TARBALL}" "https://nodejs.org/dist/latest-v${NODE_VERSION}.x/${NODE_TARBALL}"

@@ -5,7 +5,7 @@ import { mapSummaryToPickable, pickFromList } from "../fuzzyPicker";
 import { colors, drawDeployedCamera, drawFogOfWar, drawMap, drawMolotovZone, drawObjective, drawPlayer, drawSmokeZone, drawSoundSensorZone } from "../render";
 import { websocketUrl } from "../serverConfig";
 import { AudioDirector } from "../audioDirector";
-import { PlaySpritePresenter, playImpactSprite, playMuzzleFlashSprite } from "../playSprites";
+import { muzzleWorldPoint, PlaySpritePresenter, playImpactSprite, playMuzzleFlashSprite } from "../playSprites";
 
 const GADGET_RANGES: Record<GadgetKind, number> = { camera: 180, molotov: 220, smoke: 220, wall: 180, sound: 180 };
 const GADGET_RADII: Record<Exclude<GadgetKind, "wall">, number> = { camera: 120, molotov: 55, smoke: 62, sound: 135 };
@@ -332,7 +332,7 @@ export class PlayScene extends Phaser.Scene {
     const selfTarget = this.smoothedPlayer(snapshot.self);
     this.drawAimGuide(selfTarget.position, this.currentAim || snapshot.self.aim);
     this.drawGadgetPreview(selfTarget.position);
-    for (const impact of snapshot.shotImpacts) this.drawShotImpact(impact, snapshot.tick);
+    for (const impact of snapshot.shotImpacts) this.drawShotImpact(impact, snapshot);
     for (const camera of snapshot.gadgets.cameras) drawDeployedCamera(this.entityLayer, camera, camera.owner === snapshot.playerId);
     for (const zone of snapshot.gadgets.molotovs) drawMolotovZone(this.entityLayer, zone, snapshot.tick);
     for (const zone of snapshot.gadgets.smokes) drawSmokeZone(this.entityLayer, zone, snapshot.tick);
@@ -552,16 +552,30 @@ export class PlayScene extends Phaser.Scene {
     this.updateMenuOpenClass();
   }
 
-  private drawShotImpact(impact: ShotImpact, tick: number): void {
+  private drawShotImpact(impact: ShotImpact, snapshot: ServerSnapshot): void {
     if (!this.entityLayer) return;
+    const tick = snapshot.tick;
     const alpha = Math.max(0.15, 0.9 - (tick - impact.tick) * 0.14);
-    drawDottedLine(this.entityLayer, impact.origin, impact.end, impact.hit === "player" ? colors.warning : colors.destructible, alpha, 11, 5);
+    const origin = this.visualShotOrigin(impact, snapshot);
+    drawDottedLine(this.entityLayer, origin, impact.end, impact.hit === "player" ? colors.warning : colors.destructible, alpha, 11, 5);
     this.entityLayer.fillStyle(impact.hit === "player" ? colors.warning : colors.destructible, alpha);
     this.entityLayer.fillCircle(impact.end.x, impact.end.y, impact.hit === "none" ? 2 : 4);
     if (tick === impact.tick && this.claimShotFx(impact.id)) {
-      playMuzzleFlashSprite(this, impact.origin, Math.atan2(impact.end.y - impact.origin.y, impact.end.x - impact.origin.x));
+      playMuzzleFlashSprite(this, origin, Math.atan2(impact.end.y - origin.y, impact.end.x - origin.x));
       if (impact.hit !== "none") playImpactSprite(this, impact.end);
     }
+  }
+
+  private visualShotOrigin(impact: ShotImpact, snapshot: ServerSnapshot): Vec2 {
+    const shooter = impact.shooter === snapshot.self.id ? snapshot.self : snapshot.visiblePlayers.find((player) => player.id === impact.shooter);
+    if (!shooter) {
+      const aim = Math.atan2(impact.end.y - impact.origin.y, impact.end.x - impact.origin.x);
+      return { x: impact.origin.x + Math.cos(aim) * 28, y: impact.origin.y + Math.sin(aim) * 28 };
+    }
+    const rendered = this.renderedPlayers.get(shooter.id);
+    const position = rendered?.position ?? shooter.position;
+    const aim = rendered?.aim ?? shooter.aim;
+    return muzzleWorldPoint(position, aim, shooter.weaponId);
   }
 
   private claimShotFx(id: string): boolean {
