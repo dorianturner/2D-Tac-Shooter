@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { createWall, distanceToSegment, type MapDefinition } from "@tac/shared";
 import { addBotsToRoom, applyClientMessage, createRoom, isExpiredUnfilledLobby, joinRoom, refreshGeometryCaches, snapshotFor, stepRoom } from "../src/sim.js";
-import { MAX_ANALYTICS_EVENTS, MAX_REPLAY_COMMANDS, MAX_REPLAY_EVENTS, MAX_SOUND_EVENTS, OBJECTIVE_CAPTURE_TICKS, ROUND_TICKS, SOUND_EVENT_TTL_TICKS, SOUND_RADIUS_RUN_FOOTSTEP, SOUND_RADIUS_WALK_FOOTSTEP } from "../src/sim/config.js";
+import { DAMAGE_INDICATOR_TTL_TICKS, MAX_ANALYTICS_EVENTS, MAX_DAMAGE_INDICATORS, MAX_READABILITY_EVENTS, MAX_REPLAY_COMMANDS, MAX_REPLAY_EVENTS, MAX_SOUND_EVENTS, MOLOTOV_DAMAGE_INTERVAL, OBJECTIVE_CAPTURE_TICKS, ROUND_COUNTDOWN_TICKS, ROUND_TICKS, SOUND_EVENT_TTL_TICKS, SOUND_RADIUS_RUN_FOOTSTEP, SOUND_RADIUS_WALK_FOOTSTEP } from "../src/sim/config.js";
 
 describe("authoritative simulation", () => {
   it("filters hidden opponents out of snapshots", () => {
@@ -71,16 +71,27 @@ describe("authoritative simulation", () => {
     expect(room.round.phase).toBe("lobby");
     expect(snapshotFor(room, "p1").round.phase).toBe("lobby");
     expect(room.round.matchWinner).toBeUndefined();
+    const filledAtTick = room.tick;
+    expect(joinRoom(room, false, "p2")?.playerId).toBe("p2");
+    expect(room.round.phase).toBe("countdown");
+    expect(room.round.startsAtTick).toBe(filledAtTick + ROUND_COUNTDOWN_TICKS);
+    stepRoom(room);
+    expect(room.round.phase).toBe("countdown");
   });
 
   it("fills waiting lobby slots with bots and starts countdown", () => {
     const room = createRoom("bot-fill", testMap());
     joinRoom(room, false, "p1");
+    for (let i = 0; i < 90; i += 1) stepRoom(room);
+    const filledAtTick = room.tick;
     const added = addBotsToRoom(room);
     expect(added).toBe(1);
     expect(room.slots.p2.bot).toBe(true);
     expect(room.slots.p2.connected).toBe(true);
     expect(room.players.p2.position).toEqual({ x: 250, y: 120 });
+    expect(room.round.phase).toBe("countdown");
+    expect(room.round.startsAtTick).toBe(filledAtTick + ROUND_COUNTDOWN_TICKS);
+    stepRoom(room);
     expect(room.round.phase).toBe("countdown");
     expect(addBotsToRoom(room)).toBe(0);
   });
@@ -278,6 +289,82 @@ describe("authoritative simulation", () => {
       picks.add(room.round.objective!.id!);
     }
     expect(picks.size).toBeGreaterThan(1);
+  });
+
+  it("sends global readability events for kills and round end", () => {
+    const room = activeRoom(testMap());
+    shootUntilRoundEnds(room);
+
+    const p1Snapshot = snapshotFor(room, "p1");
+    const p2Snapshot = snapshotFor(room, "p2");
+
+    expect(p1Snapshot.readabilityEvents.some((event) => event.kind === "kill" && event.playerId === "p1" && event.targetId === "p2")).toBe(true);
+    expect(p2Snapshot.readabilityEvents.some((event) => event.kind === "kill" && event.playerId === "p1" && event.targetId === "p2")).toBe(true);
+    expect(p1Snapshot.readabilityEvents.some((event) => event.kind === "round-end" && event.winner === "p1" && event.reason === "kill")).toBe(true);
+  });
+
+  it("sends damage indicators only to the damaged player", () => {
+    const room = activeRoom(testMap());
+    applyClientMessage(room, "p1", { type: "command", seq: 1, tick: room.tick, move: { x: 0, y: 0 }, aim: 0, fire: true, use: "none" });
+    stepRoom(room);
+
+    const damaged = snapshotFor(room, "p2").damageIndicators;
+    expect(damaged).toHaveLength(1);
+    expect(damaged[0]).toMatchObject({ amount: 1, source: "bullet", from: { x: 50, y: 120 } });
+    expect(snapshotFor(room, "p1").damageIndicators).toHaveLength(0);
+  });
+
+  it("sends molotov damage indicators from the fire zone", () => {
+    const room = activeRoom(testMap());
+    room.molotovs.push({ id: "burn", owner: "p1", position: { x: 250, y: 120 }, radius: 55, createdAtTick: room.tick + 1 - MOLOTOV_DAMAGE_INTERVAL, expiresAtTick: room.tick + 300 });
+
+    stepRoom(room);
+
+    expect(snapshotFor(room, "p2").damageIndicators[0]).toMatchObject({ amount: 1, source: "molotov", from: { x: 250, y: 120 } });
+  });
+
+  it("reports objective status changes and readability events", () => {
+    const room = activeRoom(testMap());
+    room.round.phase = "overtime";
+    room.round.overtimeEndsAtTick = room.tick + 300;
+    room.round.objective = { id: "objective", position: { x: 150, y: 120 }, radius: 32, progressTicks: 0, requiredTicks: 1000, status: "neutral" };
+
+    room.players.p1.position = { x: 150, y: 120 };
+    room.players.p2.position = { x: 250, y: 120 };
+    stepRoom(room);
+    expect(room.round.objective?.status).toBe("capturing");
+    expect(room.round.objective?.owner).toBe("p1");
+
+    room.players.p2.position = { x: 150, y: 120 };
+    stepRoom(room);
+    expect(room.round.objective?.status).toBe("contested");
+
+    room.players.p1.position = { x: 50, y: 120 };
+    room.players.p2.position = { x: 250, y: 120 };
+    stepRoom(room);
+    expect(room.round.objective?.status).toBe("neutral");
+
+    const objectiveEvents = snapshotFor(room, "p1").readabilityEvents.filter((event) => event.kind === "objective");
+    expect(objectiveEvents.map((event) => event.objectiveStatus)).toEqual(["capturing", "contested", "neutral"]);
+  });
+
+  it("bounds readability and damage indicator buffers", () => {
+    const room = activeRoom(testMap());
+    for (let i = 0; i < MAX_READABILITY_EVENTS + 25; i += 1) {
+      room.round.phase = "active";
+      room.round.endsAtTick = room.tick + 1;
+      stepRoom(room);
+    }
+    expect(room.readabilityEvents.length).toBeLessThanOrEqual(MAX_READABILITY_EVENTS);
+
+    for (let i = 0; i < MAX_DAMAGE_INDICATORS + 25; i += 1) {
+      room.damageIndicators.push({ id: `manual-${i}`, tick: room.tick, target: "p1", from: { x: 1, y: 1 }, amount: 1, source: "bullet" });
+      stepRoom(room);
+    }
+    expect(room.damageIndicators.length).toBeLessThanOrEqual(MAX_DAMAGE_INDICATORS);
+    room.tick += DAMAGE_INDICATOR_TTL_TICKS + 1;
+    stepRoom(room);
+    expect(room.damageIndicators).toHaveLength(0);
   });
 
   it("initializes and moves hinged doors when pushed", () => {

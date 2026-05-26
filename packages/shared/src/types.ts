@@ -10,6 +10,9 @@ export type WeaponPresetId = "assault" | "sniper" | "shotgun";
 export type PlayerClassPresetId = "operator" | "scout" | "breacher";
 export type ClassAbilityId = "tactical-ping" | "dash" | "breach-any";
 export type SoundEventKind = "gunshot" | "reload" | "footstep" | "gadget" | "ability" | "impact" | "door" | "round" | "damage";
+export type ReadabilityEventKind = "round-start" | "overtime-start" | "round-end" | "kill" | "objective";
+export type ObjectiveStatus = "neutral" | "capturing" | "contested";
+export type DamageIndicatorSource = "bullet" | "molotov";
 
 export interface Vec2 {
   x: number;
@@ -251,6 +254,8 @@ export interface ServerSnapshot {
   explored: Vec2[];
   actionResults: ActionResult[];
   audibleEvents: AudibleEvent[];
+  readabilityEvents: ReadabilityEvent[];
+  damageIndicators: DamageIndicator[];
   debug?: DebugTruth;
 }
 
@@ -280,10 +285,32 @@ export interface RoundState {
     owner?: PlayerId;
     progressTicks: number;
     requiredTicks: number;
+    status?: ObjectiveStatus;
   };
   winner?: PlayerId | "draw";
   matchWinner?: PlayerId;
   reason?: "kill" | "timer" | "objective";
+}
+
+export interface ReadabilityEvent {
+  id: string;
+  tick: number;
+  kind: ReadabilityEventKind;
+  playerId?: PlayerId;
+  targetId?: PlayerId;
+  winner?: PlayerId | "draw";
+  reason?: "kill" | "timer" | "objective";
+  roundNumber?: number;
+  objectiveStatus?: ObjectiveStatus;
+  position?: Vec2;
+}
+
+export interface DamageIndicator {
+  id: string;
+  tick: number;
+  from: Vec2;
+  amount: number;
+  source: DamageIndicatorSource;
 }
 
 export interface ShotImpact {

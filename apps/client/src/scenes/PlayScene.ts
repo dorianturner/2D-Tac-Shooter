@@ -1,5 +1,5 @@
 import Phaser from "phaser";
-import { distance, isHingedDoorSegment, lineIntersection, normalize, playerClassPresets, weaponPresets, type GadgetKind, type PlayerClassPresetId, type PlayerCommand, type PlayerId, type PlayerLoadoutSelection, type PlayerState, type RoomSummary, type ServerMessage, type ServerSnapshot, type ServerWelcome, type ShotImpact, type Vec2, type Wall, type WeaponPresetId, TICK_RATE } from "@tac/shared";
+import { distance, isHingedDoorSegment, lineIntersection, normalize, playerClassPresets, weaponPresets, type GadgetKind, type PlayerClassPresetId, type PlayerCommand, type PlayerId, type PlayerLoadoutSelection, type PlayerState, type ReadabilityEvent, type RoomSummary, type ServerMessage, type ServerSnapshot, type ServerWelcome, type ShotImpact, type Vec2, type Wall, type WeaponPresetId, TICK_RATE } from "@tac/shared";
 import { listMaps, listRooms } from "../editorApi";
 import { mapSummaryToPickable, pickFromList } from "../fuzzyPicker";
 import { colors, drawDeployedCamera, drawFogOfWar, drawMap, drawMolotovZone, drawObjective, drawPlayer, drawSmokeZone, drawSoundSensorZone } from "../render";
@@ -14,6 +14,9 @@ const DEPLOYABLE_WALL_THICKNESS = 10;
 const ROOM_REFRESH_MS = 2000;
 const SERVER_TICK_MS = 1000 / TICK_RATE;
 const PLAY_CAMERA_ZOOM = 1.15;
+const FEED_TTL_TICKS = 6 * TICK_RATE;
+const LAST_SEEN_TICKS = 4 * TICK_RATE;
+const DAMAGE_CUE_TICKS = Math.round(1.2 * TICK_RATE);
 
 interface GadgetPreviewTarget {
   position: Vec2;
@@ -35,6 +38,9 @@ export class PlayScene extends Phaser.Scene {
   private sprites: PlaySpritePresenter | undefined = undefined;
   private shell: HTMLElement | undefined = undefined;
   private hud: HTMLElement | undefined = undefined;
+  private roundBanner: HTMLElement | undefined = undefined;
+  private transitionOverlay: HTMLElement | undefined = undefined;
+  private killFeed: HTMLElement | undefined = undefined;
   private keys: Record<string, Phaser.Input.Keyboard.Key> | undefined = undefined;
   private renderedPlayers = new Map<PlayerId, { position: Vec2; aim: number }>();
   private renderedWalls = new Map<string, Wall>();
@@ -55,6 +61,10 @@ export class PlayScene extends Phaser.Scene {
   private audio = new AudioDirector();
   private playedShotFx = new Set<string>();
   private playedShotFxOrder: string[] = [];
+  private seenReadabilityEvents = new Set<string>();
+  private recentReadabilityEvents: ReadabilityEvent[] = [];
+  private previousVisibleEnemies = new Set<PlayerId>();
+  private lastSeenEnemies = new Map<PlayerId, { position: Vec2; expiresAtTick: number; active: boolean }>();
 
   constructor() {
     super("play");
@@ -180,9 +190,15 @@ export class PlayScene extends Phaser.Scene {
           <button class="secondary-action" data-action="lobby">Return to Lobby</button>
         </div>
       </section>
+      <div class="round-banner" hidden></div>
+      <div class="transition-overlay" hidden></div>
+      <div class="kill-feed" aria-live="polite"></div>
     `;
     document.body.appendChild(this.shell);
     this.hud = this.shell.querySelector<HTMLElement>(".play-hud") ?? undefined;
+    this.roundBanner = this.shell.querySelector<HTMLElement>(".round-banner") ?? undefined;
+    this.transitionOverlay = this.shell.querySelector<HTMLElement>(".transition-overlay") ?? undefined;
+    this.killFeed = this.shell.querySelector<HTMLElement>(".kill-feed") ?? undefined;
     this.refreshBar = this.shell.querySelector<HTMLElement>(".room-refresh i") ?? undefined;
     this.shell.querySelector("[data-action='create']")?.addEventListener("click", () => void this.createGame());
     this.shell.querySelector("[data-action='join']")?.addEventListener("click", () => void this.joinGame());
@@ -267,6 +283,7 @@ export class PlayScene extends Phaser.Scene {
     this.renderedPlayers.clear();
     this.sprites?.clear();
     this.clearPlayedShotFx();
+    this.resetReadabilityState();
     this.rematchRequested = false;
     this.selectedGadget = "none";
     this.menuOpen = false;
@@ -324,6 +341,8 @@ export class PlayScene extends Phaser.Scene {
       this.snapshot = message;
       this.lastSnapshotAtMs = performance.now();
       this.audio.playEvents(message.audibleEvents, message.self.position, message.playerId);
+      this.consumeReadability(message);
+      this.updateLastSeenEnemies(message);
       this.updateLoadoutStatus(message);
       this.renderMap(message);
       this.renderSnapshot(message);
@@ -346,6 +365,8 @@ export class PlayScene extends Phaser.Scene {
     const aim = this.currentAim || snapshot.self.aim;
     this.drawAimGuide(muzzleWorldPoint(selfTarget.position, aim, snapshot.self.weaponId), aim);
     this.drawGadgetPreview(selfTarget.position);
+    this.drawLastSeenPings(snapshot);
+    this.drawDamageIndicators(snapshot, selfTarget.position);
     for (const impact of snapshot.shotImpacts) this.drawShotImpact(impact, snapshot);
     for (const camera of snapshot.gadgets.cameras) drawDeployedCamera(this.entityLayer, camera, camera.owner === snapshot.playerId);
     for (const zone of snapshot.gadgets.molotovs) drawMolotovZone(this.entityLayer, zone, snapshot.tick);
@@ -566,6 +587,111 @@ export class PlayScene extends Phaser.Scene {
     this.updateMenuOpenClass();
   }
 
+  private consumeReadability(snapshot: ServerSnapshot): void {
+    for (const event of snapshot.readabilityEvents) {
+      if (this.seenReadabilityEvents.has(event.id)) continue;
+      this.seenReadabilityEvents.add(event.id);
+      this.recentReadabilityEvents.push(event);
+      if (event.kind === "round-start" || event.kind === "overtime-start" || event.kind === "round-end") {
+        this.showRoundBanner(event, snapshot.playerId);
+      }
+    }
+    this.recentReadabilityEvents = this.recentReadabilityEvents
+      .filter((event) => event.tick >= snapshot.tick - FEED_TTL_TICKS)
+      .slice(-6);
+    if (this.seenReadabilityEvents.size > 240) {
+      this.seenReadabilityEvents = new Set([...this.seenReadabilityEvents].slice(-160));
+    }
+    this.renderKillFeed(snapshot);
+  }
+
+  private showRoundBanner(event: ReadabilityEvent, selfId: PlayerId): void {
+    if (!this.roundBanner) return;
+    const title = bannerTitle(event, selfId);
+    const detail = bannerDetail(event);
+    this.roundBanner.innerHTML = `<strong>${title}</strong>${detail ? `<span>${detail}</span>` : ""}`;
+    this.roundBanner.hidden = false;
+    this.roundBanner.classList.toggle("warning", event.kind === "overtime-start" || event.kind === "round-end");
+    this.roundBanner.classList.toggle("success", event.kind === "round-start");
+    const duration = event.kind === "overtime-start" || event.kind === "round-start" ? 2800 : 2200;
+    window.setTimeout(() => {
+      if (this.roundBanner?.textContent?.includes(title)) this.roundBanner.hidden = true;
+    }, duration);
+  }
+
+  private renderKillFeed(snapshot: ServerSnapshot): void {
+    if (!this.killFeed) return;
+    const items = this.recentReadabilityEvents
+      .filter((event) => event.kind !== "round-start")
+      .slice()
+      .reverse();
+    this.killFeed.innerHTML = items.map((event) => `<div class="feed-item ${event.kind}">${feedText(event, snapshot.playerId)}</div>`).join("");
+  }
+
+  private updateLastSeenEnemies(snapshot: ServerSnapshot): void {
+    const current = new Set<PlayerId>();
+    for (const player of snapshot.visiblePlayers) {
+      current.add(player.id);
+      this.lastSeenEnemies.set(player.id, { position: { ...player.position }, expiresAtTick: snapshot.tick + LAST_SEEN_TICKS, active: false });
+    }
+    for (const id of this.previousVisibleEnemies) {
+      if (current.has(id)) continue;
+      const memory = this.lastSeenEnemies.get(id);
+      if (memory) this.lastSeenEnemies.set(id, { ...memory, expiresAtTick: snapshot.tick + LAST_SEEN_TICKS, active: true });
+    }
+    for (const [id, memory] of this.lastSeenEnemies.entries()) {
+      if (memory.expiresAtTick < snapshot.tick) this.lastSeenEnemies.delete(id);
+    }
+    this.previousVisibleEnemies = current;
+  }
+
+  private drawLastSeenPings(snapshot: ServerSnapshot): void {
+    if (!this.entityLayer) return;
+    for (const memory of this.lastSeenEnemies.values()) {
+      if (!memory.active || memory.expiresAtTick < snapshot.tick) continue;
+      const alpha = Phaser.Math.Clamp((memory.expiresAtTick - snapshot.tick) / LAST_SEEN_TICKS, 0, 0.7);
+      this.entityLayer.lineStyle(2, colors.warning, alpha);
+      this.entityLayer.strokeCircle(memory.position.x, memory.position.y, 12);
+      this.entityLayer.lineBetween(memory.position.x - 8, memory.position.y, memory.position.x + 8, memory.position.y);
+      this.entityLayer.lineBetween(memory.position.x, memory.position.y - 8, memory.position.x, memory.position.y + 8);
+    }
+  }
+
+  private drawDamageIndicators(snapshot: ServerSnapshot, selfPosition: Vec2): void {
+    if (!this.entityLayer) return;
+    for (const indicator of snapshot.damageIndicators) {
+      const age = snapshot.tick - indicator.tick;
+      if (age < 0 || age > DAMAGE_CUE_TICKS) continue;
+      const direction = normalize({ x: indicator.from.x - selfPosition.x, y: indicator.from.y - selfPosition.y });
+      if (Math.hypot(direction.x, direction.y) <= 0.0001) continue;
+      const alpha = Phaser.Math.Clamp(1 - age / DAMAGE_CUE_TICKS, 0, 0.92);
+      const outer = { x: selfPosition.x + direction.x * 54, y: selfPosition.y + direction.y * 54 };
+      const inner = { x: selfPosition.x + direction.x * 34, y: selfPosition.y + direction.y * 34 };
+      const normal = { x: -direction.y, y: direction.x };
+      this.entityLayer.lineStyle(3, colors.warning, alpha);
+      this.entityLayer.lineBetween(outer.x, outer.y, inner.x, inner.y);
+      this.entityLayer.fillStyle(colors.warning, alpha * 0.72);
+      this.entityLayer.fillTriangle(
+        inner.x,
+        inner.y,
+        outer.x + normal.x * 6,
+        outer.y + normal.y * 6,
+        outer.x - normal.x * 6,
+        outer.y - normal.y * 6
+      );
+    }
+  }
+
+  private resetReadabilityState(): void {
+    this.seenReadabilityEvents.clear();
+    this.recentReadabilityEvents = [];
+    this.previousVisibleEnemies.clear();
+    this.lastSeenEnemies.clear();
+    if (this.killFeed) this.killFeed.innerHTML = "";
+    if (this.roundBanner) this.roundBanner.hidden = true;
+    if (this.transitionOverlay) this.transitionOverlay.hidden = true;
+  }
+
   private drawShotImpact(impact: ShotImpact, snapshot: ServerSnapshot): void {
     if (!this.entityLayer) return;
     const tick = snapshot.tick;
@@ -626,13 +752,15 @@ export class PlayScene extends Phaser.Scene {
     if (round.matchWinner) {
       this.updateBotFillButton(round.phase);
       const result = round.matchWinner === snapshot.playerId ? "Victory" : "Defeat";
+      this.updateTransitionOverlay(snapshot, countdown);
       this.setHud(`${result} | Final ${score} | ${this.welcome.map.name}${this.rematchRequested ? " | rematch requested" : ""}`);
       this.shell?.querySelector<HTMLElement>(".match-actions")?.removeAttribute("hidden");
       return;
     }
     this.shell?.querySelector<HTMLElement>(".match-actions")?.setAttribute("hidden", "true");
     this.updateBotFillButton(round.phase);
-    const objectiveText = round.objective ? `OBJ ${round.objective.owner ? `${round.objective.owner.toUpperCase()} ${Math.floor((round.objective.progressTicks / round.objective.requiredTicks) * 100)}%` : "neutral"}` : "";
+    this.updateTransitionOverlay(snapshot, countdown);
+    const objectiveText = round.objective ? objectiveHudText(round.objective) : "";
     const gadgetButtons = `
       <button class="${this.selectedGadget === "camera" ? "selected" : ""}" data-gadget="camera">CAM ${snapshot.self.gadgets.camera}</button>
       <button class="${this.selectedGadget === "molotov" ? "selected" : ""}" data-gadget="molotov">MOL ${snapshot.self.gadgets.molotov}</button>
@@ -665,6 +793,32 @@ export class PlayScene extends Phaser.Scene {
     });
   }
 
+  private updateTransitionOverlay(snapshot: ServerSnapshot, countdownSeconds: number): void {
+    if (!this.transitionOverlay) return;
+    const round = snapshot.round;
+    if (round.matchWinner) {
+      this.transitionOverlay.hidden = false;
+      this.transitionOverlay.className = `transition-overlay ${round.matchWinner === snapshot.playerId ? "success" : "danger"}`;
+      this.transitionOverlay.innerHTML = `
+        <strong>${round.matchWinner === snapshot.playerId ? "MATCH WON" : "MATCH LOST"}</strong>
+        <span>Final score ${formatScore(round.scores)}</span>
+      `;
+      return;
+    }
+    if (round.phase !== "countdown") {
+      this.transitionOverlay.hidden = true;
+      return;
+    }
+    const result = roundTransitionText(round, snapshot.playerId);
+    this.transitionOverlay.hidden = false;
+    this.transitionOverlay.className = `transition-overlay ${result.tone}`;
+    this.transitionOverlay.innerHTML = `
+      <strong>${result.title}</strong>
+      <span>${result.detail}</span>
+      <em>${countdownSeconds > 0 ? `Next round in ${countdownSeconds}` : "Starting now"}</em>
+    `;
+  }
+
   private returnToLobby(): void {
     this.shell?.querySelector<HTMLElement>(".match-actions")?.setAttribute("hidden", "true");
     this.shell?.classList.remove("in-game", "menu-open");
@@ -674,6 +828,7 @@ export class PlayScene extends Phaser.Scene {
     this.queuedDeploy = undefined;
     this.selectedGadget = "none";
     this.botsPending = false;
+    this.resetReadabilityState();
     this.socket?.close();
     this.socket = undefined;
     this.scene.restart();
@@ -773,6 +928,89 @@ function loadoutDetailsHtml(loadout: PlayerLoadoutSelection): string {
 
 function formatRange(range: number): string {
   return Number.isFinite(range) ? `${range}` : "infinite";
+}
+
+function objectiveHudText(objective: NonNullable<ServerSnapshot["round"]["objective"]>): string {
+  const status = objective.status ?? (objective.owner ? "capturing" : "neutral");
+  if (status === "contested") return "OBJ CONTESTED";
+  if (objective.owner) {
+    const progress = Math.floor((objective.progressTicks / Math.max(1, objective.requiredTicks)) * 100);
+    return `OBJ ${objective.owner.toUpperCase()} ${progress}%`;
+  }
+  return "OBJ NEUTRAL";
+}
+
+function roundTransitionText(round: ServerSnapshot["round"], selfId: PlayerId): { title: string; detail: string; tone: "success" | "danger" | "neutral" } {
+  if (!round.winner) {
+    return { title: `ROUND ${round.roundNumber}`, detail: "Get ready", tone: "neutral" };
+  }
+  if (round.winner === "draw") {
+    return { title: "ROUND DRAW", detail: roundEndReason(round.reason), tone: "neutral" };
+  }
+  const won = round.winner === selfId;
+  return {
+    title: won ? "ROUND WON" : "YOU WERE ELIMINATED",
+    detail: `${playerLabel(round.winner)} won by ${roundEndReason(round.reason).toLowerCase()}`,
+    tone: won ? "success" : "danger"
+  };
+}
+
+function bannerTitle(event: ReadabilityEvent, selfId: PlayerId): string {
+  if (event.kind === "round-start") return `ROUND ${event.roundNumber ?? ""} START`.trim();
+  if (event.kind === "overtime-start") return "OVERTIME";
+  if (event.kind === "round-end") {
+    if (event.winner === "draw") return "Round Draw";
+    return event.winner === selfId ? "Round Won" : "Round Lost";
+  }
+  if (event.kind === "kill") return event.playerId === selfId ? "Elimination" : "Player Down";
+  return "Objective";
+}
+
+function bannerDetail(event: ReadabilityEvent): string {
+  if (event.kind === "round-start") return "Fight";
+  if (event.kind === "overtime-start") return "Capture the objective or lose the round";
+  if (event.kind === "round-end") {
+    if (event.winner === "draw") return "No point awarded";
+    return `${playerLabel(event.winner)} won by ${roundEndReason(event.reason).toLowerCase()}`;
+  }
+  return "";
+}
+
+function feedText(event: ReadabilityEvent, selfId: PlayerId): string {
+  if (event.kind === "kill") {
+    const attacker = event.playerId === selfId ? "You" : playerLabel(event.playerId);
+    const target = event.targetId === selfId ? "you" : playerLabel(event.targetId);
+    return `${attacker} eliminated ${target}`;
+  }
+  if (event.kind === "round-end") {
+    if (event.winner === "draw") return "Round ended in a draw";
+    return `${playerLabel(event.winner)} won the round${event.reason ? ` by ${event.reason}` : ""}`;
+  }
+  if (event.kind === "overtime-start") return "Overtime objective is live";
+  if (event.kind === "objective") {
+    const status = event.objectiveStatus ?? "neutral";
+    if (status === "capturing" && event.playerId) return `${playerLabel(event.playerId)} capturing objective`;
+    if (status === "contested") return "Objective contested";
+    return "Objective neutral";
+  }
+  if (event.kind === "round-start") return `Round ${event.roundNumber ?? ""} started`.trim();
+  return "Match event";
+}
+
+function playerLabel(id?: PlayerId | "draw"): string {
+  if (!id || id === "draw") return "Draw";
+  return id.toUpperCase();
+}
+
+function roundEndReason(reason?: ServerSnapshot["round"]["reason"]): string {
+  if (reason === "kill") return "Elimination";
+  if (reason === "objective") return "Objective Capture";
+  if (reason === "timer") return "Timer";
+  return "Round";
+}
+
+function formatScore(scores: ServerSnapshot["round"]["scores"]): string {
+  return Object.entries(scores).map(([id, score]) => `${id.toUpperCase()} ${score}`).join(" / ");
 }
 
 function roomToPickable(room: RoomSummary) {
