@@ -79,3 +79,15 @@ export const SOUND_RADIUS_DOOR = 115;
 export const SOUND_RADIUS_ROUND = 900;
 export const RUN_FOOTSTEP_INTERVAL_TICKS = 18;
 export const WALK_FOOTSTEP_INTERVAL_TICKS = 36;
+
+export const BOT_THINK_INTERVAL_TICKS = 4;
+export const BOT_MEMORY_TICKS = 5 * TICK_RATE;
+export const BOT_SOUND_MEMORY_TICKS = 2 * TICK_RATE;
+export const BOT_REACTION_MIN_TICKS = Math.round(TICK_RATE / 4);
+export const BOT_REACTION_MAX_TICKS = Math.round(TICK_RATE / 4);
+export const BOT_ATTACK_RANGE_BUFFER = 1;
+export const BOT_VISION_RANGE_SCALE = 0.9;
+export const BOT_RETREAT_HP = 2;
+export const BOT_AIM_ERROR_CLOSE = (0.65 * Math.PI) / 180;
+export const BOT_AIM_ERROR_FAR = (2.3 * Math.PI) / 180;
+export const BOT_STALE_AIM_ERROR = (6 * Math.PI) / 180;

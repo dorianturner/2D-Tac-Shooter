@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { createWall, distanceToSegment, type MapDefinition } from "@tac/shared";
-import { applyClientMessage, createRoom, isExpiredUnfilledLobby, joinRoom, refreshGeometryCaches, snapshotFor, stepRoom } from "../src/sim.js";
+import { addBotsToRoom, applyClientMessage, createRoom, isExpiredUnfilledLobby, joinRoom, refreshGeometryCaches, snapshotFor, stepRoom } from "../src/sim.js";
 import { MAX_ANALYTICS_EVENTS, MAX_REPLAY_COMMANDS, MAX_REPLAY_EVENTS, MAX_SOUND_EVENTS, OBJECTIVE_CAPTURE_TICKS, ROUND_TICKS, SOUND_EVENT_TTL_TICKS, SOUND_RADIUS_RUN_FOOTSTEP, SOUND_RADIUS_WALK_FOOTSTEP } from "../src/sim/config.js";
 
 describe("authoritative simulation", () => {
@@ -71,6 +71,163 @@ describe("authoritative simulation", () => {
     expect(room.round.phase).toBe("lobby");
     expect(snapshotFor(room, "p1").round.phase).toBe("lobby");
     expect(room.round.matchWinner).toBeUndefined();
+  });
+
+  it("fills waiting lobby slots with bots and starts countdown", () => {
+    const room = createRoom("bot-fill", testMap());
+    joinRoom(room, false, "p1");
+    const added = addBotsToRoom(room);
+    expect(added).toBe(1);
+    expect(room.slots.p2.bot).toBe(true);
+    expect(room.slots.p2.connected).toBe(true);
+    expect(room.players.p2.position).toEqual({ x: 250, y: 120 });
+    expect(room.round.phase).toBe("countdown");
+    expect(addBotsToRoom(room)).toBe(0);
+  });
+
+  it("lets a human replace a bot slot and resets the match to authored spawns", () => {
+    const room = createRoom("bot-replace", testMap());
+    joinRoom(room, false, "p1");
+    addBotsToRoom(room);
+    for (let i = 0; i < 80; i += 1) stepRoom(room);
+    room.players.p1.position = { x: 120, y: 130 };
+    room.players.p2.position = { x: 180, y: 130 };
+
+    const welcome = joinRoom(room, false, undefined, { weaponId: "sniper" });
+    expect(welcome?.playerId).toBe("p2");
+    expect(room.slots.p2.bot).toBeUndefined();
+    expect(room.round.phase).toBe("countdown");
+    expect(room.round.roundNumber).toBe(1);
+    expect(room.round.scores.p1).toBe(0);
+    expect(room.players.p1.position).toEqual({ x: 50, y: 120 });
+    expect(room.players.p2.position).toEqual({ x: 250, y: 120 });
+    expect(room.players.p2.weaponId).toBe("sniper");
+  });
+
+  it("makes bots shoot eagerly after reaction delay and hold fire", () => {
+    const room = createRoom("bot-shoot", testMap());
+    joinRoom(room, false, "p1");
+    addBotsToRoom(room);
+    for (let i = 0; i < 46; i += 1) stepRoom(room);
+    room.players.p1.position = { x: 170, y: 120 };
+    room.players.p2.position = { x: 285, y: 120 };
+    room.players.p2.aim = Math.PI;
+
+    for (let i = 0; i < 24; i += 1) stepRoom(room);
+
+    expect(room.slots.p2.inputState.fire).toBe(true);
+    expect(room.players.p2.ammo).toBeLessThan(room.players.p2.magSize);
+  });
+
+  it("sends bots directly to the active overtime objective", () => {
+    const map = testMap();
+    map.objective = { id: "objective", position: { x: 70, y: 200 }, radius: 28 };
+    const room = createRoom("bot-objective", map);
+    joinRoom(room, false, "p1");
+    addBotsToRoom(room);
+    for (let i = 0; i < 46; i += 1) stepRoom(room);
+    room.round.phase = "overtime";
+    room.round.overtimeEndsAtTick = room.tick + 1800;
+    room.round.objective = { id: "objective", position: { x: 70, y: 200 }, radius: 28, progressTicks: 0, requiredTicks: 30 };
+    room.players.p2.position = { x: 250, y: 120 };
+
+    stepRoom(room);
+
+    expect(room.slots.p2.botState).toBe("objective");
+    expect(room.slots.p2.inputState.move.x).toBeLessThan(0);
+    expect(room.slots.p2.inputState.move.y).toBeGreaterThan(0);
+  });
+
+  it("lets bots shoot breakable windows but reposition around hard windows", () => {
+    const breakableMap = testMap();
+    breakableMap.walls.push(createWall("breakable-window", "transparent", { x: 210, y: 80 }, { x: 210, y: 160 }, 8, { destructible: true }));
+    const breakableRoom = createRoom("bot-window-break", breakableMap);
+    joinRoom(breakableRoom, false, "p1");
+    addBotsToRoom(breakableRoom);
+    for (let i = 0; i < 46; i += 1) stepRoom(breakableRoom);
+    breakableRoom.players.p1.position = { x: 170, y: 120 };
+    breakableRoom.players.p2.position = { x: 250, y: 120 };
+    for (let i = 0; i < 24; i += 1) stepRoom(breakableRoom);
+    expect(breakableRoom.slots.p2.inputState.fire).toBe(true);
+
+    const hardMap = testMap();
+    hardMap.walls.push(createWall("hard-window", "transparent", { x: 210, y: 80 }, { x: 210, y: 160 }, 8));
+    const hardRoom = createRoom("bot-window-hard", hardMap);
+    joinRoom(hardRoom, false, "p1");
+    addBotsToRoom(hardRoom);
+    for (let i = 0; i < 46; i += 1) stepRoom(hardRoom);
+    hardRoom.players.p1.position = { x: 170, y: 120 };
+    hardRoom.players.p2.position = { x: 250, y: 120 };
+    for (let i = 0; i < 24; i += 1) stepRoom(hardRoom);
+    expect(hardRoom.slots.p2.inputState.fire).toBe(false);
+    expect(Math.abs(hardRoom.slots.p2.inputState.move.y)).toBeGreaterThan(0);
+  });
+
+  it("uses deployable walls to block doors on objective routes", () => {
+    const map = testMap();
+    map.walls.push(createWall("door-route", "door", { x: 210, y: 90 }, { x: 210, y: 150 }, 8));
+    const room = createRoom("bot-door-wall", map);
+    joinRoom(room, false, "p1");
+    addBotsToRoom(room);
+    for (let i = 0; i < 46; i += 1) stepRoom(room);
+    room.round.phase = "overtime";
+    room.round.overtimeEndsAtTick = room.tick + 1800;
+    room.round.objective = { id: "objective", position: { x: 80, y: 120 }, radius: 28, progressTicks: 0, requiredTicks: 30 };
+    room.players.p2.position = { x: 250, y: 120 };
+    room.players.p2.aim = Math.PI;
+    room.slots.p2.botNextThinkTick = room.tick;
+    room.slots.p2.nextActionTick = room.tick;
+    room.players.p2.gadgets.molotov = 0;
+
+    stepRoom(room);
+
+    const deployedWall = room.map.walls.find((wall) => wall.preset === "deployable-wall" && wall.id.startsWith("p2-wall"));
+    expect(deployedWall).toBeDefined();
+    expect(distanceToSegment({ x: 210, y: 120 }, deployedWall!.a, deployedWall!.b)).toBeLessThan(35);
+    expect(room.players.p2.gadgets.wall).toBeLessThan(room.players.p2.gadgetLoadout.wall);
+  });
+
+  it("uses a slightly shorter direct sight range for bot perception", () => {
+    const room = createRoom("bot-short-sight", testMap());
+    joinRoom(room, false, "p1");
+    addBotsToRoom(room);
+    for (let i = 0; i < 46; i += 1) stepRoom(room);
+    room.players.p2.position = { x: 40, y: 120 };
+    room.players.p2.aim = 0;
+    room.players.p1.position = { x: 282, y: 120 };
+    room.slots.p2.botKnownEnemies.clear();
+    room.slots.p2.botNextThinkTick = room.tick;
+    room.soundEvents.length = 0;
+
+    stepRoom(room);
+
+    expect(room.slots.p2.botKnownEnemies.has("p1")).toBe(false);
+
+    room.players.p2.position = { x: 40, y: 120 };
+    room.players.p2.aim = 0;
+    room.players.p1.position = { x: 260, y: 120 };
+    room.slots.p2.botKnownEnemies.clear();
+    room.slots.p2.botNextThinkTick = room.tick;
+    room.soundEvents.length = 0;
+
+    stepRoom(room);
+
+    expect(room.slots.p2.botKnownEnemies.has("p1")).toBe(true);
+  });
+
+  it("fills all empty team-room slots with bots", () => {
+    const map = testMap();
+    map.spawns = [
+      { id: "p1", team: "blue", position: { x: 40, y: 90 }, angle: 0 },
+      { id: "p2", team: "blue", position: { x: 40, y: 150 }, angle: 0 },
+      { id: "p3", team: "orange", position: { x: 260, y: 90 }, angle: Math.PI },
+      { id: "p4", team: "orange", position: { x: 260, y: 150 }, angle: Math.PI }
+    ];
+    const room = createRoom("team-bots", map);
+    joinRoom(room, false, "p1");
+    expect(addBotsToRoom(room)).toBe(3);
+    expect(room.slotList.filter((slot) => slot.bot)).toHaveLength(3);
+    expect(room.round.phase).toBe("countdown");
   });
 
   it("enters objective overtime after sixty seconds and awards a capture after eight seconds", () => {
@@ -1266,6 +1423,25 @@ describe("authoritative simulation", () => {
     expect(room.round.scores).toEqual({ p1: 0, p2: 0 });
     expect(room.players.p1.hp).toBe(5);
   });
+
+  it("lets a human rematch immediately against a bot", () => {
+    const room = createRoom("bot-rematch", testMap());
+    joinRoom(room, false, "p1");
+    addBotsToRoom(room);
+    for (let i = 0; i < 46; i += 1) stepRoom(room);
+    room.round.scores.p1 = 2;
+    room.round.phase = "ended";
+    room.round.matchWinner = "p1";
+
+    applyClientMessage(room, "p1", { type: "rematch" });
+
+    expect(room.round.phase).toBe("countdown");
+    expect(room.round.scores).toEqual({ p1: 0, p2: 0 });
+    expect(room.slots.p2.bot).toBe(true);
+    expect(room.players.p1.position).toEqual({ x: 50, y: 120 });
+    expect(room.players.p2.position).toEqual({ x: 250, y: 120 });
+  });
+
 });
 
 function activeRoom(map: MapDefinition) {

@@ -196,7 +196,18 @@ canvas {
   margin-top: 10px;
 }
 
+.waiting-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+}
+
 .match-actions[hidden] {
+  display: none;
+}
+
+.waiting-actions[hidden] {
   display: none;
 }
 
