@@ -20,6 +20,7 @@ import {
   type ActionResult,
   type AudibleEvent,
   type ClientMessage,
+  type DamageIndicator,
   type DeployedCamera,
   type Detection,
   type GadgetKind,
@@ -30,6 +31,7 @@ import {
   type PlayerId,
   type PlayerState,
   type ReplayLog,
+  type ReadabilityEvent,
   type ServerSnapshot,
   type ServerWelcome,
   type ShotImpact,
@@ -53,6 +55,7 @@ import {
   CAMERA_HIT_RADIUS,
   CAMERA_RANGE,
   CAMERA_RADIUS,
+  DAMAGE_INDICATOR_TTL_TICKS,
   DEBUG_VISION_RAYS,
   DOOR_COLLISION_SUBSTEPS,
   DOOR_COLLISION_SKIN,
@@ -69,7 +72,9 @@ import {
   FIRE_RANGE,
   MAX_ACTION_RESULTS,
   MAX_ANALYTICS_EVENTS,
+  MAX_DAMAGE_INDICATORS,
   MAX_EXPLORED_POINTS,
+  MAX_READABILITY_EVENTS,
   MAX_REPLAY_COMMANDS,
   MAX_REPLAY_EVENTS,
   MAX_SOUND_EVENTS,
@@ -84,6 +89,7 @@ import {
   PLAYER_RADIUS,
   POST_GADGET_LOCKOUT_TICKS,
   RELOAD_TICKS,
+  READABILITY_EVENT_TTL_TICKS,
   OBJECTIVE_CAPTURE_TICKS,
   OVERTIME_TICKS,
   ROUND_COUNTDOWN_TICKS,
@@ -175,6 +181,8 @@ interface BotKnownEnemy {
   source: "vision" | "sound" | "detection" | "memory";
 }
 
+type TargetedDamageIndicator = DamageIndicator & { target: PlayerId };
+
 interface PlayerSlot {
   id: PlayerId;
   connected: boolean;
@@ -233,6 +241,10 @@ export interface RoomState {
   shotImpacts: ShotImpact[];
   soundEvents: AudibleEvent[];
   nextSoundEventId: number;
+  readabilityEvents: ReadabilityEvent[];
+  nextReadabilityEventId: number;
+  damageIndicators: TargetedDamageIndicator[];
+  nextDamageIndicatorId: number;
   deployedCameras: DeployedCamera[];
   molotovs: MolotovZone[];
   smokes: SmokeZone[];
@@ -297,6 +309,10 @@ export function createRoom(id: string, sourceMap: MapDefinition = sampleMap): Ro
     shotImpacts: [],
     soundEvents: [],
     nextSoundEventId: 0,
+    readabilityEvents: [],
+    nextReadabilityEventId: 0,
+    damageIndicators: [],
+    nextDamageIndicatorId: 0,
     deployedCameras: [],
     molotovs: [],
     smokes: [],
@@ -390,7 +406,7 @@ export function joinRoom(room: RoomState, debug = false, preferred?: PlayerId, l
   slot.debug = debug;
   if (replacingBot) resetMatch(room);
   if (room.slotList.every((candidate) => candidate.connected) && room.round.phase === "lobby") {
-    room.round.phase = "countdown";
+    startCountdown(room);
   }
   return { type: "welcome", playerId, roomId: room.id, reconnectToken: slot.reconnectToken, map: room.map };
 }
@@ -410,9 +426,21 @@ export function addBotsToRoom(room: RoomState): number {
     added += 1;
   }
   if (added > 0 && room.slotList.every((candidate) => candidate.connected) && room.round.phase === "lobby") {
-    room.round.phase = "countdown";
+    startCountdown(room);
   }
   return added;
+}
+
+function startCountdown(room: RoomState): void {
+  room.round.phase = "countdown";
+  room.round.startsAtTick = room.tick + ROUND_COUNTDOWN_TICKS;
+  room.round.endsAtTick = room.round.startsAtTick + ROUND_TICKS;
+  delete room.round.winner;
+  delete room.round.reason;
+  delete room.round.matchWinner;
+  delete room.round.nextRoundStartsAtTick;
+  delete room.round.objective;
+  delete room.round.overtimeEndsAtTick;
 }
 
 function clearBotSlot(slot: PlayerSlot): void {
@@ -555,6 +583,10 @@ export function stepRoom(room: RoomState): void {
   room.tick += 1;
   retainInPlace(room.shotImpacts, (impact) => impact.tick >= room.tick - 5);
   retainInPlace(room.soundEvents, (event) => event.tick >= room.tick - SOUND_EVENT_TTL_TICKS);
+  retainInPlace(room.readabilityEvents, (event) => event.tick >= room.tick - READABILITY_EVENT_TTL_TICKS);
+  retainInPlace(room.damageIndicators, (indicator) => indicator.tick >= room.tick - DAMAGE_INDICATOR_TTL_TICKS);
+  if (room.readabilityEvents.length > MAX_READABILITY_EVENTS) room.readabilityEvents.splice(0, room.readabilityEvents.length - MAX_READABILITY_EVENTS);
+  if (room.damageIndicators.length > MAX_DAMAGE_INDICATORS) room.damageIndicators.splice(0, room.damageIndicators.length - MAX_DAMAGE_INDICATORS);
   if (room.molotovs.length > 0) retainInPlace(room.molotovs, (zone) => zone.expiresAtTick >= room.tick);
   if (room.smokes.length > 0) retainInPlace(room.smokes, (zone) => zone.expiresAtTick >= room.tick);
   if (room.soundSensors.length > 0) retainInPlace(room.soundSensors, (zone) => !zone.destroyed);
@@ -572,6 +604,7 @@ export function stepRoom(room: RoomState): void {
     delete room.round.nextRoundStartsAtTick;
     emitRoundSound(room, "start");
     pushEvent(room, { type: "round-start", tick: room.tick });
+    pushReadabilityEvent(room, { kind: "round-start", tick: room.tick, roundNumber: room.round.roundNumber });
   }
   if (!isPlayablePhase(room.round.phase)) {
     integrateDoorsIfNeeded(room);
@@ -1614,12 +1647,14 @@ function resolveShot(room: RoomState, shooterId: PlayerId): void {
     if (hit.kind === "player" && hit.targetId) {
       const target = getPlayer(room, hit.targetId);
       if (!target.alive) continue;
+      pushDamageIndicator(room, hit.targetId, { tick: room.tick, from: origin, amount: weapon.damage, source: "bullet" });
       target.hp = Math.max(0, target.hp - weapon.damage);
       emitDamageSound(room, target, target.hp <= 0 ? "kill" : "hit");
       pushEvent(room, { type: "hit", tick: room.tick, shooter: shooterId, target: hit.targetId });
       if (target.hp <= 0) {
         target.alive = false;
         pushEvent(room, { type: "kill", tick: room.tick, shooter: shooterId, target: hit.targetId });
+        pushReadabilityEvent(room, { kind: "kill", tick: room.tick, playerId: shooterId, targetId: hit.targetId });
         finishRound(room, shooterId, "kill");
         return;
       }
@@ -1791,9 +1826,11 @@ function enterOvertimeOrDraw(room: RoomState): void {
     position: { ...objective.position },
     radius: objective.radius,
     progressTicks: 0,
-    requiredTicks: OBJECTIVE_CAPTURE_TICKS
+    requiredTicks: OBJECTIVE_CAPTURE_TICKS,
+    status: "neutral"
   };
   emitRoundSound(room, "overtime");
+  pushReadabilityEvent(room, { kind: "overtime-start", tick: room.tick, roundNumber: room.round.roundNumber, position: objective.position });
 }
 
 function chooseOvertimeObjective(room: RoomState): ReturnType<typeof mapObjectives>[number] | undefined {
@@ -1807,25 +1844,37 @@ function chooseOvertimeObjective(room: RoomState): ReturnType<typeof mapObjectiv
 function resolveObjectiveCapture(room: RoomState): void {
   if (room.round.phase !== "overtime" || !room.round.objective) return;
   const objective = room.round.objective;
+  const previousOwner = objective.owner;
+  const previousStatus = objective.status ?? "neutral";
   const inside = room.playerList.filter((player) => player.alive && distance(player.position, objective.position) <= objective.radius);
+  let capturingOwner: PlayerId | undefined;
   if (inside.length === 0) {
     delete objective.owner;
     objective.progressTicks = 0;
-    return;
-  }
-  const teams = new Set(inside.map((player) => player.team));
-  if (teams.size > 1) {
+    objective.status = "neutral";
+  } else if (new Set(inside.map((player) => player.team)).size > 1) {
     delete objective.owner;
     objective.progressTicks = 0;
-    return;
+    objective.status = "contested";
+  } else {
+    capturingOwner = inside[0]!.id;
+    if (objective.owner !== capturingOwner) {
+      objective.owner = capturingOwner;
+      objective.progressTicks = 0;
+    }
+    objective.status = "capturing";
+    objective.progressTicks += 1;
   }
-  const owner = inside[0]!.id;
-  if (objective.owner !== owner) {
-    objective.owner = owner;
-    objective.progressTicks = 0;
+  if (previousStatus !== objective.status || previousOwner !== objective.owner) {
+    pushReadabilityEvent(room, {
+      kind: "objective",
+      tick: room.tick,
+      objectiveStatus: objective.status,
+      ...(objective.owner ? { playerId: objective.owner } : {}),
+      position: objective.position
+    });
   }
-  objective.progressTicks += 1;
-  if (objective.progressTicks >= objective.requiredTicks) finishRound(room, owner, "objective");
+  if (capturingOwner && objective.progressTicks >= objective.requiredTicks) finishRound(room, capturingOwner, "objective");
 }
 
 function finishRound(room: RoomState, winner: PlayerId | "draw", reason: "kill" | "timer" | "objective"): void {
@@ -1836,6 +1885,7 @@ function finishRound(room: RoomState, winner: PlayerId | "draw", reason: "kill" 
   delete room.round.overtimeEndsAtTick;
   emitRoundSound(room, reason);
   pushEvent(room, { type: "round-end", tick: room.tick, winner, reason });
+  pushReadabilityEvent(room, { kind: "round-end", tick: room.tick, winner, reason, roundNumber: room.round.roundNumber });
   if (winner !== "draw" && (room.round.scores[winner] ?? 0) >= 2) {
     room.round.phase = "ended";
     room.round.matchWinner = winner;
@@ -1933,6 +1983,10 @@ function resetMatch(room: RoomState): void {
   room.tick = 0;
   room.round = { phase: "countdown", roundNumber: 1, scores: scoresForPlayers(playerIds(room)), startsAtTick: ROUND_COUNTDOWN_TICKS, endsAtTick: ROUND_COUNTDOWN_TICKS + ROUND_TICKS };
   room.rematchRequests.clear();
+  room.readabilityEvents = [];
+  room.damageIndicators = [];
+  room.nextReadabilityEventId = 0;
+  room.nextDamageIndicatorId = 0;
   resetRoundWorld(room);
   resetPlayersForRound(room);
 }
@@ -1949,11 +2003,13 @@ function resolveMolotovDamage(room: RoomState): void {
     for (const player of room.playerList) {
       if (!player.alive || distance(player.position, zone.position) > zone.radius) continue;
       if (!hasLineOfSightWithSmoke(room.map, [], zone.position, player.position, room.activeVisionWalls)) continue;
+      pushDamageIndicator(room, player.id, { tick: room.tick, from: zone.position, amount: 1, source: "molotov" });
       player.hp = Math.max(0, player.hp - 1);
       emitDamageSound(room, player, player.hp <= 0 ? "kill" : "fire");
       if (player.hp <= 0) {
         player.alive = false;
         pushEvent(room, { type: "kill", tick: room.tick, shooter: zone.owner, target: player.id });
+        pushReadabilityEvent(room, { kind: "kill", tick: room.tick, playerId: zone.owner, targetId: player.id });
         finishRound(room, zone.owner, "kill");
         return;
       }
@@ -2055,7 +2111,9 @@ export function snapshotFor(room: RoomState, playerId: PlayerId): ServerSnapshot
     ],
     explored: slot.explored,
     actionResults: slot.actionResults.slice(-12),
-    audibleEvents
+    audibleEvents,
+    readabilityEvents: room.readabilityEvents.map(cloneReadabilityEvent),
+    damageIndicators: room.damageIndicators.filter((indicator) => indicator.target === playerId).map(cloneDamageIndicator)
   };
 
   if (debug) {
@@ -2130,6 +2188,31 @@ function pushEvent(room: RoomState, event: AuthoritativeEvent): void {
   pushBounded(room.replay.events, event, MAX_REPLAY_EVENTS);
 }
 
+function pushReadabilityEvent(room: RoomState, event: Omit<ReadabilityEvent, "id">): void {
+  pushBounded(
+    room.readabilityEvents,
+    {
+      id: `read-${room.id}-${room.nextReadabilityEventId++}`,
+      ...event,
+      ...(event.position ? { position: { ...event.position } } : {})
+    },
+    MAX_READABILITY_EVENTS
+  );
+}
+
+function pushDamageIndicator(room: RoomState, target: PlayerId, indicator: Omit<DamageIndicator, "id">): void {
+  pushBounded(
+    room.damageIndicators,
+    {
+      id: `damage-${room.id}-${room.nextDamageIndicatorId++}`,
+      target,
+      ...indicator,
+      from: { ...indicator.from }
+    },
+    MAX_DAMAGE_INDICATORS
+  );
+}
+
 function emitSound(room: RoomState, event: Omit<AudibleEvent, "id" | "tick">): void {
   pushBounded(
     room.soundEvents,
@@ -2164,4 +2247,12 @@ function cloneCamera(camera: DeployedCamera): DeployedCamera {
 
 function cloneAudibleEvent(event: AudibleEvent): AudibleEvent {
   return { ...event, position: { ...event.position } };
+}
+
+function cloneReadabilityEvent(event: ReadabilityEvent): ReadabilityEvent {
+  return { ...event, ...(event.position ? { position: { ...event.position } } : {}) };
+}
+
+function cloneDamageIndicator(indicator: TargetedDamageIndicator): DamageIndicator {
+  return { id: indicator.id, tick: indicator.tick, from: { ...indicator.from }, amount: indicator.amount, source: indicator.source };
 }
