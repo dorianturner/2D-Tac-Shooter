@@ -652,7 +652,9 @@ export function stepRoom(room: RoomState): void {
     player.position = next;
     emitFootstepSound(room, player, slot);
     processPendingActions(room, player, slot);
+    if (!isPlayablePhase(room.round.phase)) return;
     if (input.fire && room.tick >= slot.nextActionTick) resolveShot(room, player.id);
+    if (!isPlayablePhase(room.round.phase)) return;
     recoverWeaponBloom(player, slot);
     if (ENABLE_MATCH_ANALYTICS) pushBounded(room.analytics, { type: "movement-sample", tick: room.tick, data: { playerId: player.id, position: player.position } }, MAX_ANALYTICS_EVENTS);
   }
