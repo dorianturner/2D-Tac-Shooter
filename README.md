@@ -1,4 +1,4 @@
-# Tactical 1v1 Information Warfare Shooter
+# Sightline
 
 Competitive 2D tactical shooter prototype focused on temporary information control, repositioning, deception, and environmental adaptation.
 

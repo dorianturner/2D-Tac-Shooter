@@ -651,6 +651,13 @@ export class PlayScene extends Phaser.Scene {
   }
 
   private returnToLobby(): void {
+    this.shell?.querySelector<HTMLElement>(".match-actions")?.setAttribute("hidden", "true");
+    this.shell?.classList.remove("in-game", "menu-open");
+    this.menuOpen = false;
+    this.rematchRequested = false;
+    this.pendingDeploy = undefined;
+    this.queuedDeploy = undefined;
+    this.selectedGadget = "none";
     this.socket?.close();
     this.socket = undefined;
     this.scene.restart();
