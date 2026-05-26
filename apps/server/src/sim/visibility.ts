@@ -5,6 +5,7 @@ import {
   hasLineOfSight,
   lineIntersection,
   mul,
+  normalizeAngle,
   pointInCone,
   type MapDefinition,
   type SmokeZone,
@@ -37,11 +38,51 @@ export function visibleConePolygonWithSmoke(map: MapDefinition, smokes: SmokeZon
   const points: Vec2[] = [origin];
   const start = angle - fov / 2;
   const steps = Math.max(2, rays);
-  for (let index = 0; index <= steps; index += 1) {
-    const rayAngle = start + (fov * index) / steps;
-    points.push(raycastWithSmoke(map, smokes, origin, rayAngle, range, visionWalls));
+  const angles = new Map<number, number>();
+  const addAngle = (rayAngle: number) => {
+    if (!angleInCone(rayAngle, angle, fov)) return;
+    const offset = angleOffsetFromStart(rayAngle, start);
+    angles.set(Math.round(offset * 100000), rayAngle);
+  };
+  for (let index = 0; index <= steps; index += 1) addAngle(start + (fov * index) / steps);
+  for (const wall of visionWalls) {
+    addEndpointAngles(origin, angle, fov, range, wall.a, addAngle);
+    addEndpointAngles(origin, angle, fov, range, wall.b, addAngle);
   }
+  for (const smoke of smokes) addSmokeTangentAngles(origin, angle, fov, range, smoke, addAngle);
+  const sortedAngles = [...angles.values()].sort((a, b) => angleOffsetFromStart(a, start) - angleOffsetFromStart(b, start));
+  for (const rayAngle of sortedAngles) points.push(raycastWithSmoke(map, smokes, origin, rayAngle, range, visionWalls));
   return points;
+}
+
+function addEndpointAngles(origin: Vec2, coneAngle: number, fov: number, range: number, point: Vec2, addAngle: (angle: number) => void): void {
+  const pointDistance = distance(origin, point);
+  if (pointDistance > range + 4 || pointDistance < 0.001) return;
+  const base = Math.atan2(point.y - origin.y, point.x - origin.x);
+  const epsilon = Math.max(0.0015, Math.min(0.012, 1 / Math.max(70, pointDistance)));
+  for (const candidate of [base - epsilon, base, base + epsilon]) {
+    if (angleInCone(candidate, coneAngle, fov)) addAngle(candidate);
+  }
+}
+
+function addSmokeTangentAngles(origin: Vec2, coneAngle: number, fov: number, range: number, smoke: SmokeZone, addAngle: (angle: number) => void): void {
+  const centerDistance = distance(origin, smoke.position);
+  if (centerDistance > range + smoke.radius || centerDistance < 0.001) return;
+  const base = Math.atan2(smoke.position.y - origin.y, smoke.position.x - origin.x);
+  const tangent = Math.asin(Math.min(0.98, smoke.radius / centerDistance));
+  const epsilon = 0.004;
+  for (const candidate of [base - tangent - epsilon, base - tangent, base, base + tangent, base + tangent + epsilon]) {
+    if (angleInCone(candidate, coneAngle, fov)) addAngle(candidate);
+  }
+}
+
+function angleInCone(rayAngle: number, coneAngle: number, fov: number): boolean {
+  return Math.abs(normalizeAngle(rayAngle - coneAngle)) <= fov / 2 + 0.00001;
+}
+
+function angleOffsetFromStart(rayAngle: number, start: number): number {
+  const offset = normalizeAngle(rayAngle - start);
+  return offset < 0 ? offset + Math.PI * 2 : offset;
 }
 
 function raycastWithSmoke(map: MapDefinition, smokes: SmokeZone[], origin: Vec2, angle: number, range: number, visionWalls: Wall[]): Vec2 {
