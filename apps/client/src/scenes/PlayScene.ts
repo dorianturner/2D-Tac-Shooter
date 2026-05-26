@@ -330,7 +330,8 @@ export class PlayScene extends Phaser.Scene {
     this.entityLayer.clear();
     drawFogOfWar(this.entityLayer, this.welcome.map, snapshot.visiblePolygon, snapshot.visibleCircles);
     const selfTarget = this.smoothedPlayer(snapshot.self);
-    this.drawAimGuide(selfTarget.position, this.currentAim || snapshot.self.aim);
+    const aim = this.currentAim || snapshot.self.aim;
+    this.drawAimGuide(muzzleWorldPoint(selfTarget.position, aim, snapshot.self.weaponId), aim);
     this.drawGadgetPreview(selfTarget.position);
     for (const impact of snapshot.shotImpacts) this.drawShotImpact(impact, snapshot);
     for (const camera of snapshot.gadgets.cameras) drawDeployedCamera(this.entityLayer, camera, camera.owner === snapshot.playerId);

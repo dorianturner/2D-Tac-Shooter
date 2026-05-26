@@ -163,11 +163,7 @@ export function drawFogOfWar(g: Phaser.GameObjects.Graphics, map: MapDefinition,
 }
 
 export function drawDeployedCamera(g: Phaser.GameObjects.Graphics, camera: DeployedCamera, owned: boolean): void {
-  if (camera.destroyed) {
-    g.lineStyle(1, colors.destroyed, 0.6);
-    g.strokeCircle(camera.position.x, camera.position.y, 7);
-    return;
-  }
+  if (camera.destroyed) return;
   g.lineStyle(1, colors.sensor, owned ? 0.46 : 0.28);
   g.strokeCircle(camera.position.x, camera.position.y, camera.radius);
   g.fillStyle(colors.sensor, owned ? 0.95 : 0.58);

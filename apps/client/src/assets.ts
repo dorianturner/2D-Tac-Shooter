@@ -113,27 +113,24 @@ export const weaponSpriteAssets = {
   assault: {
     asset: imageAssets.weaponAssault,
     worldLength: 34,
-    offsetX: 25,
-    muzzleOffsetX: 42
+    offsetX: 25
   },
   sniper: {
     asset: imageAssets.weaponSniper,
     worldLength: 60,
-    offsetX: 35,
-    muzzleOffsetX: 65
+    offsetX: 35
   },
   shotgun: {
     asset: imageAssets.weaponShotgun,
     worldLength: 38,
-    offsetX: 25,
-    muzzleOffsetX: 44
+    offsetX: 25
   }
 } as const;
 
 export const gadgetSpriteAssets = {
   camera: {
     asset: imageAssets.camera,
-    worldSize: 18
+    worldSize: 25
   },
   soundSensor: {
     asset: imageAssets.soundSensor,

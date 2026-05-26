@@ -63,13 +63,14 @@ export class PlaySpritePresenter {
   }
 
   private renderCamera(camera: DeployedCamera, playerId: PlayerId, live: Set<string>): void {
+    if (camera.destroyed) return;
     const id = `camera:${camera.id}`;
     live.add(id);
     const image = upsertImage(this.scene, this.gadgets, id, gadgetSpriteAssets.camera.asset.key, 41);
     image.setPosition(camera.position.x, camera.position.y);
     image.setRotation(0);
     setMaxWorldSize(image, gadgetSpriteAssets.camera.worldSize);
-    image.setAlpha(camera.destroyed ? 0.35 : camera.owner === playerId ? 1 : 0.68);
+    image.setAlpha(camera.owner === playerId ? 1 : 0.68);
   }
 
   private renderSoundSensor(sensor: SoundSensorZone, tick: number, live: Set<string>): void {
@@ -120,7 +121,7 @@ export function playMuzzleFlashSprite(scene: Phaser.Scene, origin: Vec2, aim: nu
 
 export function muzzleWorldPoint(position: Vec2, aim: number, weaponId: WeaponPresetId): Vec2 {
   const config = weaponSpriteAssets[weaponId] ?? weaponSpriteAssets.assault;
-  return pointAlongAim(position, aim, config.muzzleOffsetX);
+  return pointAlongAim(position, aim, weaponMuzzleOffset(config));
 }
 
 function upsertImage<T extends string>(scene: Phaser.Scene, map: Map<T, Phaser.GameObjects.Image>, id: T, key: string, depth: number): Phaser.GameObjects.Image {
@@ -156,4 +157,8 @@ function setWorldWidth(image: Phaser.GameObjects.Image, width: number): void {
 
 function pointAlongAim(position: Vec2, aim: number, offset: number): Vec2 {
   return { x: position.x + Math.cos(aim) * offset, y: position.y + Math.sin(aim) * offset };
+}
+
+function weaponMuzzleOffset(config: { offsetX: number; worldLength: number }): number {
+  return config.offsetX + config.worldLength / 2;
 }
