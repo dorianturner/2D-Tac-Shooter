@@ -56,8 +56,8 @@ export class PlaySpritePresenter {
     const live = new Set<string>();
     for (const camera of snapshot.gadgets.cameras) this.renderCamera(camera, snapshot.playerId, live);
     for (const sensor of snapshot.gadgets.soundSensors) this.renderSoundSensor(sensor, snapshot.tick, live);
-    for (const zone of snapshot.gadgets.molotovs) this.renderZone(zone, imageAssets.molotov.key, live, 0.9);
-    for (const zone of snapshot.gadgets.smokes) this.renderZone(zone, imageAssets.smoke.key, live, 0.72);
+    for (const zone of snapshot.gadgets.molotovs) this.renderZone(zone, gadgetSpriteAssets.molotov.asset.key, live, gadgetSpriteAssets.molotov.alpha);
+    for (const zone of snapshot.gadgets.smokes) this.renderZone(zone, gadgetSpriteAssets.smoke.asset.key, live, gadgetSpriteAssets.smoke.alpha);
     for (const wall of snapshot.map.walls) this.renderDeployableWall(wall, live);
     pruneMissing(this.gadgets, live);
   }

@@ -74,12 +74,14 @@ export const imageAssets: Record<ImageAssetId, ImageAssetDefinition> = {
   molotov: {
     id: "molotov",
     key: "sprite.fx.molotov",
+    path: "/assets/fx/molotov.png",
     examplePath: "/assets/fx/molotov.png",
     recommended: "Transparent PNG, 64x64, fire patch or flame icon."
   },
   smoke: {
     id: "smoke",
     key: "sprite.fx.smoke",
+    path: "/assets/fx/smoke.png",
     examplePath: "/assets/fx/smoke.png",
     recommended: "Transparent PNG, 64x64, soft smoke puff."
   },
@@ -130,7 +132,7 @@ export const weaponSpriteAssets = {
 export const gadgetSpriteAssets = {
   camera: {
     asset: imageAssets.camera,
-    worldSize: 25
+    worldSize: 20
   },
   soundSensor: {
     asset: imageAssets.soundSensor,
@@ -138,11 +140,13 @@ export const gadgetSpriteAssets = {
   },
   molotov: {
     asset: imageAssets.molotov,
-    worldSize: 42
+    worldSize: 110,
+    alpha: 0.30
   },
   smoke: {
     asset: imageAssets.smoke,
-    worldSize: 56
+    worldSize: 120,
+    alpha: 0.30
   },
   deployableWall: {
     asset: imageAssets.deployableWall
