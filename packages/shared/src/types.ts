@@ -381,6 +381,10 @@ export interface LoadoutChangeRequest {
   loadout: PlayerLoadoutSelection;
 }
 
+export interface AddBotsRequest {
+  type: "add-bots";
+}
+
 export interface ServerWelcome {
   type: "welcome";
   playerId: PlayerId;
@@ -398,5 +402,5 @@ export interface RoomSummary {
   phase: RoundPhase;
 }
 
-export type ClientMessage = ClientHello | PlayerCommand | RematchRequest | LoadoutChangeRequest;
-export type ServerMessage = ServerWelcome | ServerSnapshot | { type: "rooms"; rooms: RoomSummary[] } | { type: "error"; message: string };
+export type ClientMessage = ClientHello | PlayerCommand | RematchRequest | LoadoutChangeRequest | AddBotsRequest;
+export type ServerMessage = ServerWelcome | ServerSnapshot | { type: "rooms"; rooms: RoomSummary[] } | { type: "bots-added"; count: number } | { type: "error"; message: string };

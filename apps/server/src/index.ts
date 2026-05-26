@@ -6,7 +6,7 @@ import { WebSocketServer, type WebSocket } from "ws";
 import type { ClientHello, ClientMessage, PlayerId, RoomSummary, ServerMessage } from "@tac/shared";
 import { handleCorsPreflight } from "./cors.js";
 import { listMaps, readMap, writeMap } from "./mapStore.js";
-import { applyClientMessage, createRoom, isExpiredUnfilledLobby, joinRoom, snapshotFor, stepRoom, TICK_MS, type RoomState } from "./sim.js";
+import { addBotsToRoom, applyClientMessage, createRoom, isExpiredUnfilledLobby, joinRoom, snapshotFor, stepRoom, TICK_MS, type RoomState } from "./sim.js";
 import { MAX_SOCKET_BUFFERED_AMOUNT, SNAPSHOT_INTERVAL_TICKS } from "./sim/config.js";
 
 const PORT = Number(process.env.PORT ?? 8787);
@@ -43,6 +43,19 @@ wss.on("connection", (socket) => {
       return;
     }
     const room = rooms.get(session.roomId);
+    if (message.type === "add-bots") {
+      if (!room) {
+        send(socket, { type: "error", message: "Room does not exist" });
+        return;
+      }
+      const added = addBotsToRoom(room);
+      if (added <= 0) {
+        send(socket, { type: "error", message: "No bot slots available" });
+        return;
+      }
+      send(socket, { type: "bots-added", count: added });
+      return;
+    }
     if (room) applyClientMessage(room, session.playerId, message);
   });
 
@@ -290,11 +303,12 @@ function listRooms(): RoomSummary[] {
   cleanupEndedRooms();
   return [...rooms.values()]
     .filter((room) => room.round.phase !== "ended" && !room.round.matchWinner)
+    .filter((room) => room.slotList.some((slot) => !slot.connected || slot.bot))
     .map((room) => ({
       id: room.id,
       mapId: room.map.id,
       mapName: room.map.name,
-      playerCount: room.slotList.filter((slot) => slot.connected).length,
+      playerCount: room.slotList.filter((slot) => slot.connected && !slot.bot).length,
       maxPlayers: room.slotList.length,
       phase: room.round.phase
     }));

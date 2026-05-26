@@ -39,6 +39,17 @@ import {
   type Wall
 } from "@tac/shared";
 import {
+  BOT_AIM_ERROR_CLOSE,
+  BOT_AIM_ERROR_FAR,
+  BOT_ATTACK_RANGE_BUFFER,
+  BOT_MEMORY_TICKS,
+  BOT_REACTION_MAX_TICKS,
+  BOT_REACTION_MIN_TICKS,
+  BOT_RETREAT_HP,
+  BOT_SOUND_MEMORY_TICKS,
+  BOT_STALE_AIM_ERROR,
+  BOT_THINK_INTERVAL_TICKS,
+  BOT_VISION_RANGE_SCALE,
   CAMERA_HIT_RADIUS,
   CAMERA_RANGE,
   CAMERA_RADIUS,
@@ -46,6 +57,7 @@ import {
   DOOR_COLLISION_SUBSTEPS,
   DOOR_COLLISION_SKIN,
   DEPLOYABLE_WALL_RANGE,
+  DEPLOYABLE_WALL_THICKNESS,
   DOOR_DAMPING,
   DOOR_MAX_ANGLE,
   DOOR_MAX_ANGULAR_ACCELERATION,
@@ -151,9 +163,29 @@ interface RoomScratch {
   desiredMovements: DesiredMovement[];
 }
 
+type BotMode = "roam" | "investigate" | "attack" | "retreat" | "objective" | "hold";
+
+interface BotKnownEnemy {
+  id: PlayerId;
+  position: Vec2;
+  velocity: Vec2;
+  confidence: number;
+  lastSeenTick: number;
+  expiresAtTick: number;
+  source: "vision" | "sound" | "detection" | "memory";
+}
+
 interface PlayerSlot {
   id: PlayerId;
   connected: boolean;
+  bot?: true;
+  botSeq: number;
+  botState: BotMode;
+  botGoal?: Vec2;
+  botKnownEnemies: Map<PlayerId, BotKnownEnemy>;
+  botNextThinkTick: number;
+  botNextReactionTick: number;
+  botSuppressionUntilTick: number;
   debug: boolean;
   reconnectToken: string;
   pendingLoadout?: PlayerLoadoutSelection;
@@ -281,6 +313,12 @@ function createSlot(id: PlayerId): PlayerSlot {
   return {
     id,
     connected: false,
+    botSeq: 0,
+    botState: "roam",
+    botKnownEnemies: new Map(),
+    botNextThinkTick: 0,
+    botNextReactionTick: 0,
+    botSuppressionUntilTick: 0,
     debug: false,
     reconnectToken: `${id}-${Math.random().toString(36).slice(2)}`,
     inputState: { move: { x: 0, y: 0 }, aim: 0, fire: false, walk: false },
@@ -341,21 +379,84 @@ function applyPlayerLoadout(player: PlayerState, selection?: PlayerLoadoutSelect
 }
 
 export function joinRoom(room: RoomState, debug = false, preferred?: PlayerId, loadout?: PlayerLoadoutSelection): ServerWelcome | null {
-  const playerId = preferred ?? room.slotList.find((candidate) => !candidate.connected)?.id ?? null;
+  const playerId = preferred ?? room.slotList.find((candidate) => !candidate.connected && !candidate.bot)?.id ?? room.slotList.find((candidate) => candidate.bot)?.id ?? null;
   if (!playerId || room.round.matchWinner) return null;
   const slot = getSlot(room, playerId);
+  const replacingBot = Boolean(slot.bot);
+  if (slot.connected && !slot.bot) return null;
+  if (replacingBot) clearBotSlot(slot);
   applyPlayerLoadout(getPlayer(room, playerId), loadout);
   slot.connected = true;
   slot.debug = debug;
+  if (replacingBot) resetMatch(room);
   if (room.slotList.every((candidate) => candidate.connected) && room.round.phase === "lobby") {
     room.round.phase = "countdown";
   }
   return { type: "welcome", playerId, roomId: room.id, reconnectToken: slot.reconnectToken, map: room.map };
 }
 
+export function addBotsToRoom(room: RoomState): number {
+  if (room.round.matchWinner || room.round.phase !== "lobby") return 0;
+  if (!room.slotList.some((slot) => slot.connected && !slot.bot)) return 0;
+  let added = 0;
+  for (const slot of room.slotList) {
+    if (slot.connected || slot.bot) continue;
+    slot.connected = true;
+    slot.bot = true;
+    slot.debug = false;
+    resetBotSlot(slot, room.tick);
+    applyPlayerLoadout(getPlayer(room, slot.id), botLoadoutForSlot(room, slot));
+    resetPlayerToSpawn(room, getPlayer(room, slot.id), slot);
+    added += 1;
+  }
+  if (added > 0 && room.slotList.every((candidate) => candidate.connected) && room.round.phase === "lobby") {
+    room.round.phase = "countdown";
+  }
+  return added;
+}
+
+function clearBotSlot(slot: PlayerSlot): void {
+  delete slot.bot;
+  slot.pendingActions = [];
+  slot.seenActionSeqs.clear();
+  slot.actionResults = [];
+  slot.botKnownEnemies.clear();
+  slot.botState = "roam";
+  delete slot.botGoal;
+  slot.botNextThinkTick = 0;
+  slot.botNextReactionTick = 0;
+  slot.botSuppressionUntilTick = 0;
+  slot.inputState = { move: { x: 0, y: 0 }, aim: 0, fire: false, walk: false };
+}
+
+function resetBotSlot(slot: PlayerSlot, tick: number): void {
+  slot.pendingActions = [];
+  slot.seenActionSeqs.clear();
+  slot.inputState = { move: { x: 0, y: 0 }, aim: 0, fire: false, walk: false };
+  slot.botSeq = 0;
+  slot.botState = "roam";
+  delete slot.botGoal;
+  slot.botKnownEnemies.clear();
+  slot.botNextThinkTick = tick;
+  slot.botNextReactionTick = tick + BOT_REACTION_MAX_TICKS;
+  slot.botSuppressionUntilTick = 0;
+}
+
+function botLoadoutForSlot(room: RoomState, slot: PlayerSlot): PlayerLoadoutSelection {
+  const player = getPlayer(room, slot.id);
+  const teamIndex = room.playerList.filter((candidate) => candidate.team === player.team).findIndex((candidate) => candidate.id === player.id);
+  if (teamIndex % 3 === 1) return { classId: "scout", weaponId: "shotgun" };
+  if (teamIndex % 3 === 2) return { classId: "breacher", weaponId: "assault" };
+  return { classId: "operator", weaponId: "assault" };
+}
+
 export function applyClientMessage(room: RoomState, playerId: PlayerId, message: ClientMessage): void {
+  if (message.type === "add-bots") return;
   if (message.type === "rematch") {
     room.rematchRequests.add(playerId);
+    for (const slot of room.slotList) {
+      if (slot.bot) room.rematchRequests.add(slot.id);
+    }
     if (room.round.matchWinner && playerIds(room).every((id) => room.rematchRequests.has(id))) resetMatch(room);
     return;
   }
@@ -478,6 +579,8 @@ export function stepRoom(room: RoomState): void {
     return;
   }
 
+  updateBotControllers(room);
+
   const desiredMovements = room.scratch.desiredMovements;
   desiredMovements.length = 0;
   for (const player of room.playerList) {
@@ -539,6 +642,384 @@ function emitFootstepSound(room: RoomState, player: PlayerState, slot: PlayerSlo
     volume: walking ? 0.28 : 0.62,
     subtype: walking ? "walk" : "run"
   });
+}
+
+function updateBotControllers(room: RoomState): void {
+  for (const slot of room.slotList) {
+    if (!slot.bot) continue;
+    const player = getPlayer(room, slot.id);
+    if (!player.alive) {
+      slot.inputState = { move: { x: 0, y: 0 }, aim: player.aim, fire: false, walk: false };
+      continue;
+    }
+    updateBotMemory(room, player, slot);
+    if (room.round.phase === "overtime" || room.tick >= slot.botNextThinkTick) {
+      thinkForBot(room, player, slot);
+      slot.botNextThinkTick = room.tick + BOT_THINK_INTERVAL_TICKS + Math.floor(botNoise(room, slot, 7) * 4);
+    }
+  }
+}
+
+function updateBotMemory(room: RoomState, player: PlayerState, slot: PlayerSlot): void {
+  for (const enemy of enemyPlayers(room, player.id)) {
+    if (!enemy.alive) continue;
+    if (isPointVisibleToBot(room, player, enemy.position)) {
+      rememberEnemy(slot, enemy, 1, BOT_MEMORY_TICKS, "vision", room.tick);
+    }
+  }
+  for (const detection of room.detections) {
+    if (detection.owner !== player.id || !detection.targetId) continue;
+    const target = room.players[detection.targetId];
+    if (!target || target.team === player.team) continue;
+    rememberEnemy(slot, { ...target, position: detection.position }, detection.confidence, Math.max(1, detection.expiresAtTick - room.tick), "detection", room.tick);
+  }
+  for (const event of room.soundEvents) {
+    if (event.tick < room.tick - BOT_SOUND_MEMORY_TICKS || event.sourceId === player.id) continue;
+    const sourcePlayer = room.players[event.sourceId as PlayerId];
+    if (sourcePlayer && sourcePlayer.team === player.team) continue;
+    const confidence = event.kind === "gunshot" ? 0.68 : event.kind === "footstep" ? 0.44 : event.kind === "door" ? 0.34 : 0.5;
+    const targetId = sourcePlayer?.id ?? nearestEnemyId(room, player, event.position);
+    if (!targetId) continue;
+    rememberEnemy(slot, { id: targetId, position: event.position, velocity: sourcePlayer?.velocity ?? { x: 0, y: 0 } }, confidence, BOT_SOUND_MEMORY_TICKS, "sound", event.tick);
+  }
+  for (const [id, memory] of slot.botKnownEnemies.entries()) {
+    if (memory.expiresAtTick < room.tick) slot.botKnownEnemies.delete(id);
+  }
+}
+
+function rememberEnemy(slot: PlayerSlot, enemy: Pick<PlayerState, "id" | "position" | "velocity">, confidence: number, ttl: number, source: BotKnownEnemy["source"], tick: number): void {
+  const existing = slot.botKnownEnemies.get(enemy.id);
+  if (existing && existing.confidence > confidence && existing.expiresAtTick > tick) return;
+  if (!existing || existing.source !== source || existing.expiresAtTick < tick) {
+    const reaction = BOT_REACTION_MIN_TICKS + Math.round((1 - Math.min(1, confidence)) * (BOT_REACTION_MAX_TICKS - BOT_REACTION_MIN_TICKS));
+    slot.botNextReactionTick = Math.max(slot.botNextReactionTick, tick + reaction);
+  }
+  slot.botKnownEnemies.set(enemy.id, {
+    id: enemy.id,
+    position: { ...enemy.position },
+    velocity: { ...enemy.velocity },
+    confidence,
+    lastSeenTick: tick,
+    expiresAtTick: tick + ttl,
+    source
+  });
+}
+
+function thinkForBot(room: RoomState, player: PlayerState, slot: PlayerSlot): void {
+  const weapon = createWeapon({ weaponId: player.weaponId });
+  const target = bestBotTarget(room, player, slot);
+  const targetDistance = target ? distance(player.position, target.position) : Number.POSITIVE_INFINITY;
+  const visibleTarget = target && target.source === "vision";
+  const inFire = room.molotovs.some((zone) => zone.owner !== player.id && distance(player.position, zone.position) <= zone.radius);
+  const objective = room.round.phase === "overtime" ? room.round.objective : undefined;
+  const lowResources = player.hp <= BOT_RETREAT_HP || player.isReloading || player.ammo <= 0 || inFire;
+  slot.botState = lowResources && target ? "retreat" : objective ? "objective" : visibleTarget ? "attack" : target ? "investigate" : shouldBotHold(room, player, slot) ? "hold" : "roam";
+
+  const goal = botGoalForMode(room, player, slot, target);
+  slot.botGoal = goal;
+  const move = chooseBotMove(room, player, slot, goal, target);
+  const aimTarget = target ? botAimTarget(room, player, slot, target) : goal;
+  const aim = Math.atan2(aimTarget.y - player.position.y, aimTarget.x - player.position.x);
+  const fire = shouldBotFire(room, player, slot, target, targetDistance, weapon);
+  slot.inputState = { move, aim, fire, walk: slot.botState === "hold" || slot.botState === "investigate" };
+
+  enqueueBotTacticalActions(room, player, slot, target, goal);
+}
+
+function bestBotTarget(room: RoomState, player: PlayerState, slot: PlayerSlot): BotKnownEnemy | undefined {
+  let best: BotKnownEnemy | undefined;
+  for (const memory of slot.botKnownEnemies.values()) {
+    const target = room.players[memory.id];
+    if (!target?.alive || target.team === player.team) continue;
+    const agePenalty = Math.max(0, (room.tick - memory.lastSeenTick) / BOT_MEMORY_TICKS);
+    const score = memory.confidence - agePenalty * 0.45 - distance(player.position, memory.position) / 1600;
+    if (!best || score > best.confidence - distance(player.position, best.position) / 1600) best = memory;
+  }
+  return best;
+}
+
+function botGoalForMode(room: RoomState, player: PlayerState, slot: PlayerSlot, target?: BotKnownEnemy): Vec2 {
+  if (slot.botState === "objective" && room.round.objective) return { ...room.round.objective.position };
+  if (slot.botState === "attack" && target) return tacticalEngagementPoint(room, player, target);
+  if (slot.botState === "investigate" && target) return target.position;
+  if (slot.botState === "retreat" && target) return retreatPoint(room, player, target.position);
+  if (slot.botGoal && distance(player.position, slot.botGoal) > 28) return slot.botGoal;
+  return patrolPoint(room, slot);
+}
+
+function chooseBotMove(room: RoomState, player: PlayerState, slot: PlayerSlot, goal: Vec2, target?: BotKnownEnemy): Vec2 {
+  if (slot.botState === "attack" && target && botHasUsefulShot(room, player, target, player.position)) {
+    const targetDistance = distance(player.position, target.position);
+    if (targetDistance > preferredBotRange(player) + 18) return normalize({ x: target.position.x - player.position.x, y: target.position.y - player.position.y });
+  }
+  const toGoal = normalize({ x: goal.x - player.position.x, y: goal.y - player.position.y });
+  const perpendicular = { x: -toGoal.y, y: toGoal.x };
+  const candidates = [
+    { x: 0, y: 0 },
+    toGoal,
+    perpendicular,
+    { x: -perpendicular.x, y: -perpendicular.y },
+    normalize({ x: toGoal.x + perpendicular.x * 0.55, y: toGoal.y + perpendicular.y * 0.55 }),
+    normalize({ x: toGoal.x - perpendicular.x * 0.55, y: toGoal.y - perpendicular.y * 0.55 })
+  ];
+  let best = candidates[0]!;
+  let bestScore = Number.NEGATIVE_INFINITY;
+  for (const candidate of candidates) {
+    const desired = add(player.position, mul(candidate, playerRunSpeed(player) * BOT_THINK_INTERVAL_TICKS));
+    const resolved = movePlayerWithSweptCollision(room.map, player.position, desired, PLAYER_RADIUS, room.activeMovementWalls);
+    const progress = distance(player.position, goal) - distance(resolved, goal);
+    const firePenalty = room.molotovs.some((zone) => zone.owner !== player.id && distance(resolved, zone.position) <= zone.radius) ? 180 : 0;
+    const targetDistance = target ? distance(resolved, target.position) : 0;
+    const rangeScore = target ? -Math.abs(targetDistance - preferredBotRange(player)) * (slot.botState === "attack" ? 0.55 : 0.12) : 0;
+    const shotScore = target && botHasUsefulShot(room, player, target, resolved) ? 36 : target ? -22 : 0;
+    const flankScore = target ? botFlankScore(room, player.position, target.position, candidate) : 0;
+    const coverScore = target ? botCoverScore(room, resolved, target.position) : 0;
+    const score = progress + rangeScore + shotScore + flankScore + coverScore - firePenalty + botNoise(room, slot, Math.round(candidate.x * 17 + candidate.y * 31)) * 2;
+    if (score > bestScore) {
+      bestScore = score;
+      best = candidate;
+    }
+  }
+  if (distance(player.position, goal) < 18 && slot.botState !== "retreat") return { x: 0, y: 0 };
+  return normalize(best);
+}
+
+function botAimTarget(room: RoomState, player: PlayerState, slot: PlayerSlot, target: BotKnownEnemy): Vec2 {
+  const targetPlayer = room.players[target.id];
+  const velocity = targetPlayer?.velocity ?? target.velocity;
+  const targetDistance = distance(player.position, target.position);
+  const tracking = Math.min(1, Math.max(0, (room.tick - target.lastSeenTick) / Math.max(1, BOT_REACTION_MAX_TICKS)));
+  const predictionScale = target.source === "vision" ? 3 + tracking * 5 : 1.5;
+  const predicted = add(target.position, mul(velocity, predictionScale));
+  const baseError = target.source === "vision"
+    ? BOT_AIM_ERROR_CLOSE + (BOT_AIM_ERROR_FAR - BOT_AIM_ERROR_CLOSE) * Math.min(1, targetDistance / 520)
+    : BOT_STALE_AIM_ERROR;
+  const movementError = Math.hypot(player.velocity.x, player.velocity.y) > 0.5 ? baseError * 0.55 : 0;
+  const confidenceScale = 1.15 - Math.min(1, target.confidence) * 0.55;
+  const missAngle = deterministicSigned(room.tick, slot.botSeq, stringSeed(player.id) + stringSeed(target.id)) * (baseError + movementError) * confidenceScale;
+  return add(predicted, mul(angleToVector(Math.atan2(predicted.y - player.position.y, predicted.x - player.position.x) + Math.PI / 2), Math.tan(missAngle) * targetDistance));
+}
+
+function shouldBotFire(room: RoomState, player: PlayerState, slot: PlayerSlot, target: BotKnownEnemy | undefined, targetDistance: number, weapon: ReturnType<typeof createWeapon>): boolean {
+  if (!target || player.isReloading) return false;
+  if (player.ammo <= 0) {
+    enqueueBotAction(slot, { seq: nextBotSeq(slot), type: "reload" });
+    return false;
+  }
+  if (target.source !== "vision" && target.confidence < 0.7) return false;
+  const range = Number.isFinite(weapon.effectiveRange) ? weapon.effectiveRange : Math.hypot(room.map.bounds.width, room.map.bounds.height) * 2;
+  if (targetDistance > range * BOT_ATTACK_RANGE_BUFFER) return false;
+  if (room.tick < slot.botNextReactionTick) return false;
+  if (player.weaponId === "shotgun" && targetDistance > weapon.effectiveRange * 0.72) return false;
+  if (player.weaponId === "sniper" && Math.hypot(player.velocity.x, player.velocity.y) > 0.35) return false;
+  if (!botHasUsefulShot(room, player, target, player.position)) return false;
+  return true;
+}
+
+function tacticalEngagementPoint(room: RoomState, player: PlayerState, target: BotKnownEnemy): Vec2 {
+  const desiredRange = preferredBotRange(player);
+  const awayFromTarget = normalize({ x: player.position.x - target.position.x, y: player.position.y - target.position.y });
+  const base = add(target.position, mul(awayFromTarget, desiredRange));
+  return {
+    x: Math.max(PLAYER_RADIUS, Math.min(room.map.bounds.width - PLAYER_RADIUS, base.x)),
+    y: Math.max(PLAYER_RADIUS, Math.min(room.map.bounds.height - PLAYER_RADIUS, base.y))
+  };
+}
+
+function botHasUsefulShot(room: RoomState, player: PlayerState, target: BotKnownEnemy, origin: Vec2): boolean {
+  const blocker = nearestShootingBlocker(room, origin, target.position);
+  if (!blocker) return true;
+  return isHingedDoorSegment(blocker) || isShootableDestructibleSegment(blocker);
+}
+
+function nearestShootingBlocker(room: RoomState, origin: Vec2, target: Vec2): Wall | undefined {
+  let nearest: { wall: Wall; distance: number } | undefined;
+  for (const wall of room.activeShootingWalls) {
+    const hit = lineIntersection(origin, target, wall.a, wall.b);
+    if (!hit) continue;
+    const hitDistance = distance(origin, hit);
+    if (!nearest || hitDistance < nearest.distance) nearest = { wall, distance: hitDistance };
+  }
+  return nearest?.wall;
+}
+
+function botCoverScore(room: RoomState, position: Vec2, target: Vec2): number {
+  let score = 0;
+  for (const wall of room.activeShootingWalls) {
+    if (isHingedDoorSegment(wall)) continue;
+    const wallDistance = distanceToSegment(position, wall.a, wall.b);
+    if (wallDistance > 62) continue;
+    const betweenTargetAndBot = Boolean(lineIntersection(position, target, wall.a, wall.b));
+    if (betweenTargetAndBot) {
+      score -= wall.blocksShooting ? 18 : 0;
+      continue;
+    }
+    score += Math.max(0, 14 - wallDistance * 0.18);
+  }
+  return score;
+}
+
+function botFlankScore(room: RoomState, origin: Vec2, target: Vec2, move: Vec2): number {
+  const blocker = nearestShootingBlocker(room, origin, target);
+  if (!blocker || isHingedDoorSegment(blocker) || isShootableDestructibleSegment(blocker)) return 0;
+  const wallDirection = normalize({ x: blocker.b.x - blocker.a.x, y: blocker.b.y - blocker.a.y });
+  return Math.abs(move.x * wallDirection.x + move.y * wallDirection.y) * 80 - Math.abs(move.x * (target.x - origin.x) + move.y * (target.y - origin.y)) * 0.08;
+}
+
+function enqueueBotTacticalActions(room: RoomState, player: PlayerState, slot: PlayerSlot, target: BotKnownEnemy | undefined, goal: Vec2): void {
+  if (player.isReloading) return;
+  if (player.ammo <= 0) enqueueBotAction(slot, { seq: nextBotSeq(slot), type: "reload" });
+  if (room.tick < slot.nextActionTick) return;
+  maybeBotUseDoor(room, player, slot, goal);
+  maybeBotUseAbility(room, player, slot, target);
+  maybeBotDeployGadget(room, player, slot, target, goal);
+}
+
+function maybeBotUseDoor(room: RoomState, player: PlayerState, slot: PlayerSlot, goal: Vec2): void {
+  const nearDoor = room.activeDoors.find((door) => distanceToSegment(player.position, door.a, door.b) <= DOOR_TOGGLE_RANGE && distance(goal, segmentMidpoint(door)) < distance(player.position, goal) + 80);
+  if (!nearDoor || room.tick - (nearDoor.lastPushTick ?? -9999) <= 8) return;
+  enqueueBotAction(slot, { seq: nextBotSeq(slot), type: "use", use: "door-toggle" });
+}
+
+function maybeBotUseAbility(room: RoomState, player: PlayerState, slot: PlayerSlot, target?: BotKnownEnemy): void {
+  if (room.tick < slot.nextAbilityTick) return;
+  if (player.abilityId === "tactical-ping" && (target?.source !== "vision" || room.round.phase === "overtime")) {
+    enqueueBotAction(slot, { seq: nextBotSeq(slot), type: "ability" });
+  } else if (player.abilityId === "dash" && slot.botState === "retreat") {
+    enqueueBotAction(slot, { seq: nextBotSeq(slot), type: "ability" });
+  } else if (player.abilityId === "breach-any" && target && target.source !== "vision" && distance(player.position, target.position) < 180) {
+    enqueueBotAction(slot, { seq: nextBotSeq(slot), type: "ability" });
+  }
+}
+
+function maybeBotDeployGadget(room: RoomState, player: PlayerState, slot: PlayerSlot, target: BotKnownEnemy | undefined, goal: Vec2): void {
+  if (slot.pendingActions.some((action) => action.type === "gadget")) return;
+  const doorBlock = botDoorBlockPlacement(room, player, slot, target, goal);
+  if (doorBlock && player.gadgets.wall > 0) {
+    enqueueBotAction(slot, { seq: nextBotSeq(slot), type: "gadget", gadget: "wall", target: doorBlock.target, angle: doorBlock.angle });
+    return;
+  }
+  if ((slot.botState === "attack" || slot.botState === "investigate") && target && player.gadgets.molotov > 0 && distance(player.position, target.position) <= MOLOTOV_RANGE) {
+    enqueueBotAction(slot, { seq: nextBotSeq(slot), type: "gadget", gadget: "molotov", target: target.position });
+    return;
+  }
+  if ((slot.botState === "retreat" || slot.botState === "objective") && player.gadgets.smoke > 0) {
+    enqueueBotAction(slot, { seq: nextBotSeq(slot), type: "gadget", gadget: "smoke", target: goal });
+    return;
+  }
+  if ((slot.botState === "retreat" || slot.botState === "hold") && player.gadgets.wall > 0) {
+    enqueueBotAction(slot, { seq: nextBotSeq(slot), type: "gadget", gadget: "wall", target: add(player.position, mul(angleToVector(player.aim), 44)), angle: player.aim + Math.PI / 2 });
+    return;
+  }
+  const setupPoint = room.round.objective?.position ?? { x: room.map.bounds.width / 2, y: room.map.bounds.height / 2 };
+  if ((slot.botState === "roam" || slot.botState === "hold" || slot.botState === "objective") && distance(player.position, setupPoint) < 220) {
+    if (player.gadgets.camera > 0) {
+      enqueueBotAction(slot, { seq: nextBotSeq(slot), type: "gadget", gadget: "camera", target: clampTarget(room.map, player.position, setupPoint, CAMERA_RANGE) });
+    } else if (player.gadgets.sound > 0) {
+      enqueueBotAction(slot, { seq: nextBotSeq(slot), type: "gadget", gadget: "sound", target: clampTarget(room.map, player.position, setupPoint, SOUND_SENSOR_RANGE) });
+    }
+  }
+}
+
+function botDoorBlockPlacement(room: RoomState, player: PlayerState, slot: PlayerSlot, target: BotKnownEnemy | undefined, goal: Vec2): { target: Vec2; angle: number } | undefined {
+  if (player.gadgets.wall <= 0 || slot.botState === "roam" || slot.botState === "investigate") return undefined;
+  const interest = slot.botState === "objective" ? goal : target?.position;
+  if (!interest) return undefined;
+  let best: { target: Vec2; angle: number; score: number } | undefined;
+  for (const door of room.activeDoors) {
+    if (!door.hinge || !door.closedB || door.destroyed) continue;
+    const placement = doorBlockerPlacement(room, player, door);
+    if (!placement) continue;
+    const doorMid = segmentMidpoint(door);
+    const onRoute = Boolean(lineIntersection(player.position, interest, door.a, door.b));
+    const nearInterest = Math.max(0, 140 - distance(doorMid, interest));
+    const score = (onRoute ? 220 : 0) + nearInterest - distance(player.position, placement.target) * 0.35;
+    if (!best || score > best.score) best = { ...placement, score };
+  }
+  return best ? { target: best.target, angle: best.angle } : undefined;
+}
+
+function doorBlockerPlacement(room: RoomState, player: PlayerState, door: Wall): { target: Vec2; angle: number } | undefined {
+  if (!door.hinge || !door.closedB) return undefined;
+  const direction = normalize({ x: door.closedB.x - door.hinge.x, y: door.closedB.y - door.hinge.y });
+  if (Math.hypot(direction.x, direction.y) <= 0.0001) return undefined;
+  const normal = { x: -direction.y, y: direction.x };
+  const side = (player.position.x - door.hinge.x) * normal.x + (player.position.y - door.hinge.y) * normal.y >= 0 ? 1 : -1;
+  const offset = PLAYER_RADIUS + door.thickness / 2 + DEPLOYABLE_WALL_THICKNESS / 2 + 4;
+  const target = add(segmentMidpoint({ ...door, a: door.hinge, b: door.closedB }), mul(normal, side * offset));
+  if (distance(player.position, target) > DEPLOYABLE_WALL_RANGE) return undefined;
+  if (distance(clampTarget(room.map, player.position, target, DEPLOYABLE_WALL_RANGE), target) > 1) return undefined;
+  if (!hasPlacementLineOfSight(room.map, player.position, target)) return undefined;
+  if (!isPlacementClear(room.map, target, PLAYER_RADIUS)) return undefined;
+  if (room.map.walls.some((wall) => wall.preset === "deployable-wall" && !wall.destroyed && distanceToSegment(target, wall.a, wall.b) <= DEPLOYABLE_WALL_THICKNESS + 8)) return undefined;
+  return { target, angle: Math.atan2(direction.y, direction.x) };
+}
+
+function enqueueBotAction(slot: PlayerSlot, action: PendingAction): void {
+  const actionKey = `${action.seq}:${action.type}`;
+  if (slot.seenActionSeqs.has(actionKey)) return;
+  slot.seenActionSeqs.add(actionKey);
+  slot.pendingActions.push(action);
+}
+
+function nextBotSeq(slot: PlayerSlot): number {
+  slot.botSeq += 1;
+  return slot.botSeq;
+}
+
+function shouldBotHold(room: RoomState, player: PlayerState, slot: PlayerSlot): boolean {
+  return room.tick % 180 < 45 && (slot.botGoal ? distance(player.position, slot.botGoal) < 70 : player.gadgets.camera === 0);
+}
+
+function patrolPoint(room: RoomState, slot: PlayerSlot): Vec2 {
+  const index = Math.floor((room.tick / 300 + stringSeed(slot.id)) % 5);
+  const margin = 42;
+  const points = [
+    { x: room.map.bounds.width / 2, y: room.map.bounds.height / 2 },
+    { x: margin, y: margin },
+    { x: room.map.bounds.width - margin, y: margin },
+    { x: room.map.bounds.width - margin, y: room.map.bounds.height - margin },
+    { x: margin, y: room.map.bounds.height - margin }
+  ];
+  return points[index]!;
+}
+
+function retreatPoint(room: RoomState, player: PlayerState, danger: Vec2): Vec2 {
+  const away = normalize({ x: player.position.x - danger.x, y: player.position.y - danger.y });
+  return {
+    x: Math.max(PLAYER_RADIUS, Math.min(room.map.bounds.width - PLAYER_RADIUS, player.position.x + away.x * 120)),
+    y: Math.max(PLAYER_RADIUS, Math.min(room.map.bounds.height - PLAYER_RADIUS, player.position.y + away.y * 120))
+  };
+}
+
+function preferredBotRange(player: PlayerState): number {
+  const weapon = createWeapon({ weaponId: player.weaponId });
+  if (player.weaponId === "shotgun") return weapon.effectiveRange * 0.48;
+  if (!Number.isFinite(weapon.effectiveRange)) return weapon.visionRange * 0.55;
+  return weapon.effectiveRange * 0.4;
+}
+
+function nearestEnemyId(room: RoomState, player: PlayerState, position: Vec2): PlayerId | undefined {
+  return enemyPlayers(room, player.id)
+    .filter((candidate) => candidate.alive)
+    .map((candidate) => ({ id: candidate.id, distance: distance(candidate.position, position) }))
+    .sort((a, b) => a.distance - b.distance)[0]?.id;
+}
+
+function botNoise(room: RoomState, slot: PlayerSlot, salt: number): number {
+  const value = Math.sin(room.replay.seed * 13.37 + room.tick * 0.071 + slot.botSeq * 0.19 + stringSeed(slot.id) + salt * 7.17) * 43758.5453;
+  return value - Math.floor(value);
+}
+
+function deterministicSigned(tick: number, seq: number, salt: number): number {
+  const value = Math.sin(tick * 12.9898 + seq * 78.233 + salt * 0.137) * 43758.5453;
+  return (value - Math.floor(value)) * 2 - 1;
+}
+
+function stringSeed(value: string): number {
+  let seed = 0;
+  for (let index = 0; index < value.length; index += 1) seed = (seed * 31 + value.charCodeAt(index)) % 9973;
+  return seed;
 }
 
 function emitReloadSound(room: RoomState, player: PlayerState, subtype: "start" | "complete"): void {
@@ -1385,19 +1866,7 @@ function resetPlayersForRound(room: RoomState): void {
     const player = getPlayer(room, spawn.id);
     const slot = getSlot(room, player.id);
     applyPendingLoadout(player, slot);
-    player.position = { ...spawn.position };
-    player.velocity = { x: 0, y: 0 };
-    player.aim = spawn.angle;
-    player.alive = true;
-    player.hp = PLAYER_MAX_HP;
-    const weapon = createWeapon({ weaponId: player.weaponId });
-    player.ammo = weapon.magSize;
-    player.magSize = weapon.magSize;
-    player.isReloading = false;
-    player.walking = false;
-    delete player.reloadEndsAtTick;
-    player.gadgets = { ...player.gadgetLoadout };
-    player.abilityReadyAtTick = room.tick;
+    resetPlayerToSpawn(room, player, slot, spawn);
     slot.inputState = { move: { x: 0, y: 0 }, aim: spawn.angle, fire: false, walk: false };
     slot.pendingActions = [];
     slot.seenActionSeqs.clear();
@@ -1410,7 +1879,30 @@ function resetPlayersForRound(room: RoomState): void {
     slot.shotsFired = 0;
     slot.lastSeenWalls.clear();
     slot.lastSeenCameras.clear();
+    if (slot.bot) {
+      resetBotSlot(slot, room.tick);
+      slot.inputState = { move: { x: 0, y: 0 }, aim: spawn.angle, fire: false, walk: false };
+    }
   }
+}
+
+function resetPlayerToSpawn(room: RoomState, player: PlayerState, slot: PlayerSlot, explicitSpawn?: MapDefinition["spawns"][number]): void {
+  const spawn = explicitSpawn ?? room.map.spawns.find((candidate) => candidate.id === player.id);
+  if (!spawn) return;
+  player.position = { ...spawn.position };
+  player.velocity = { x: 0, y: 0 };
+  player.aim = spawn.angle;
+  player.alive = true;
+  player.hp = PLAYER_MAX_HP;
+  const weapon = createWeapon({ weaponId: player.weaponId });
+  player.ammo = weapon.magSize;
+  player.magSize = weapon.magSize;
+  player.isReloading = false;
+  player.walking = false;
+  delete player.reloadEndsAtTick;
+  player.gadgets = { ...player.gadgetLoadout };
+  player.abilityReadyAtTick = room.tick;
+  slot.inputState = { move: { x: 0, y: 0 }, aim: spawn.angle, fire: false, walk: false };
 }
 
 function applyPendingLoadouts(room: RoomState): void {
@@ -1585,6 +2077,14 @@ function isPointVisibleToPlayer(room: RoomState, player: PlayerState, point: Vec
   if (distance(player.position, point) <= PLAYER_CLOSE_VISION_RADIUS && hasLineOfSightWithSmoke(room.map, room.smokes, player.position, point, room.activeVisionWalls)) return true;
   const weapon = createWeapon({ weaponId: player.weaponId });
   if (hasConeLineOfSightWithSmoke(room.map, room.smokes, player.position, player.aim, weapon.visionFov, weapon.visionRange, point, room.activeVisionWalls)) return true;
+  return room.deployedCameras.some((camera) => camera.owner === player.id && !camera.destroyed && distance(camera.position, point) <= camera.radius && hasLineOfSightWithSmoke(room.map, room.smokes, camera.position, point, room.activeVisionWalls));
+}
+
+function isPointVisibleToBot(room: RoomState, player: PlayerState, point: Vec2): boolean {
+  if (distance(player.position, point) <= PLAYER_CLOSE_VISION_RADIUS && hasLineOfSightWithSmoke(room.map, room.smokes, player.position, point, room.activeVisionWalls)) return true;
+  const weapon = createWeapon({ weaponId: player.weaponId });
+  const botVisionRange = weapon.visionRange * BOT_VISION_RANGE_SCALE;
+  if (hasConeLineOfSightWithSmoke(room.map, room.smokes, player.position, player.aim, weapon.visionFov, botVisionRange, point, room.activeVisionWalls)) return true;
   return room.deployedCameras.some((camera) => camera.owner === player.id && !camera.destroyed && distance(camera.position, point) <= camera.radius && hasLineOfSightWithSmoke(room.map, room.smokes, camera.position, point, room.activeVisionWalls));
 }
 

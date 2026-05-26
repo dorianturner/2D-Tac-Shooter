@@ -46,6 +46,7 @@ export class PlayScene extends Phaser.Scene {
   private menuOpen = false;
   private queuedDeploy: { gadget: GadgetKind; target: Vec2; angle?: number } | undefined = undefined;
   private pendingDeploy: { gadget: GadgetKind; seq: number } | undefined = undefined;
+  private botsPending = false;
   private roomRefreshTimer: number | undefined = undefined;
   private roomRefreshStartedAt = 0;
   private refreshBar: HTMLElement | undefined = undefined;
@@ -163,6 +164,9 @@ export class PlayScene extends Phaser.Scene {
         </div>
         <div class="room-list"></div>
         <div class="play-hud"></div>
+        <div class="waiting-actions" hidden>
+          <button class="primary-action" data-action="bots">Play against bots</button>
+        </div>
         <div class="escape-menu" hidden>
           <h2>Game Menu</h2>
           <p>Change loadout for next round or leave the current game.</p>
@@ -183,6 +187,7 @@ export class PlayScene extends Phaser.Scene {
     this.shell.querySelector("[data-action='create']")?.addEventListener("click", () => void this.createGame());
     this.shell.querySelector("[data-action='join']")?.addEventListener("click", () => void this.joinGame());
     this.shell.querySelector("[data-action='refresh']")?.addEventListener("click", () => void this.refreshRooms());
+    this.shell.querySelector("[data-action='bots']")?.addEventListener("click", () => this.requestBots());
     this.shell.querySelector("[data-action='rematch']")?.addEventListener("click", () => {
       this.rematchRequested = true;
       this.send({ type: "rematch" });
@@ -267,6 +272,7 @@ export class PlayScene extends Phaser.Scene {
     this.menuOpen = false;
     this.queuedDeploy = undefined;
     this.pendingDeploy = undefined;
+    this.botsPending = false;
     this.socket = new WebSocket(websocketUrl());
     this.socket.addEventListener("open", () => this.send({ type: "hello", ...hello }));
     this.socket.addEventListener("message", (event) => {
@@ -304,6 +310,7 @@ export class PlayScene extends Phaser.Scene {
       drawMap(this.mapLayer!, message.map);
       this.updateLoadoutStatus();
       this.setHud(`Room ${message.roomId} | ${message.playerId.toUpperCase()} | ${message.map.name} | waiting for player`);
+      this.updateBotFillButton("lobby");
     } else if (message.type === "snapshot") {
       if (this.pendingDeploy) {
         const result = message.actionResults.find((candidate) => candidate.action === "gadget" && candidate.seq === this.pendingDeploy?.seq);
@@ -320,7 +327,13 @@ export class PlayScene extends Phaser.Scene {
       this.updateLoadoutStatus(message);
       this.renderMap(message);
       this.renderSnapshot(message);
+    } else if (message.type === "bots-added") {
+      this.botsPending = false;
+      this.updateBotFillButton("countdown");
+      this.setHud(`${message.count} bot${message.count === 1 ? "" : "s"} added. Match starting.`);
     } else if (message.type === "error") {
+      this.botsPending = false;
+      this.updateBotFillButton(this.snapshot?.round.phase);
       this.setHud(message.message);
     }
   }
@@ -611,12 +624,14 @@ export class PlayScene extends Phaser.Scene {
         .join(" | ")
       : "";
     if (round.matchWinner) {
+      this.updateBotFillButton(round.phase);
       const result = round.matchWinner === snapshot.playerId ? "Victory" : "Defeat";
       this.setHud(`${result} | Final ${score} | ${this.welcome.map.name}${this.rematchRequested ? " | rematch requested" : ""}`);
       this.shell?.querySelector<HTMLElement>(".match-actions")?.removeAttribute("hidden");
       return;
     }
     this.shell?.querySelector<HTMLElement>(".match-actions")?.setAttribute("hidden", "true");
+    this.updateBotFillButton(round.phase);
     const objectiveText = round.objective ? `OBJ ${round.objective.owner ? `${round.objective.owner.toUpperCase()} ${Math.floor((round.objective.progressTicks / round.objective.requiredTicks) * 100)}%` : "neutral"}` : "";
     const gadgetButtons = `
       <button class="${this.selectedGadget === "camera" ? "selected" : ""}" data-gadget="camera">CAM ${snapshot.self.gadgets.camera}</button>
@@ -658,6 +673,7 @@ export class PlayScene extends Phaser.Scene {
     this.pendingDeploy = undefined;
     this.queuedDeploy = undefined;
     this.selectedGadget = "none";
+    this.botsPending = false;
     this.socket?.close();
     this.socket = undefined;
     this.scene.restart();
@@ -710,6 +726,25 @@ export class PlayScene extends Phaser.Scene {
     this.shell?.classList.toggle("menu-open", this.menuOpen);
     const menu = this.shell?.querySelector<HTMLElement>(".escape-menu");
     if (menu) menu.hidden = !this.menuOpen;
+  }
+
+  private requestBots(): void {
+    const phase = this.snapshot?.round.phase ?? "lobby";
+    if (this.botsPending || !this.welcome || phase !== "lobby") return;
+    this.botsPending = true;
+    this.updateBotFillButton("lobby");
+    this.send({ type: "add-bots" });
+    this.setHud("Adding bots...");
+  }
+
+  private updateBotFillButton(phase = this.snapshot?.round.phase): void {
+    const container = this.shell?.querySelector<HTMLElement>(".waiting-actions");
+    const button = this.shell?.querySelector<HTMLButtonElement>("[data-action='bots']");
+    if (!container || !button) return;
+    const visible = Boolean(this.welcome && phase === "lobby");
+    container.hidden = !visible;
+    button.disabled = this.botsPending;
+    button.textContent = this.botsPending ? "Adding bots..." : "Play against bots";
   }
 }
 
