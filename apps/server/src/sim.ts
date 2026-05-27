@@ -44,6 +44,7 @@ import {
   BOT_AIM_ERROR_CLOSE,
   BOT_AIM_ERROR_FAR,
   BOT_ATTACK_RANGE_BUFFER,
+  BOT_DAMAGE_RETREAT_TICKS,
   BOT_LOW_HEALTH_RETREAT_TICKS,
   BOT_MEMORY_TICKS,
   BOT_REACTION_MAX_TICKS,
@@ -170,7 +171,7 @@ interface RoomScratch {
   desiredMovements: DesiredMovement[];
 }
 
-type BotMode = "roam" | "investigate" | "attack" | "retreat" | "objective" | "hold";
+type BotMode = "scout" | "roam" | "investigate" | "attack" | "retreat" | "objective";
 
 interface BotKnownEnemy {
   id: PlayerId;
@@ -258,6 +259,7 @@ export interface RoomState {
   molotovs: MolotovZone[];
   smokes: SmokeZone[];
   soundSensors: SoundSensorZone[];
+  botLoadout: PlayerLoadoutSelection;
   rematchRequests: Set<PlayerId>;
   replay: ReplayLog;
   analytics: AnalyticsEvent[];
@@ -326,6 +328,7 @@ export function createRoom(id: string, sourceMap: MapDefinition = sampleMap): Ro
     molotovs: [],
     smokes: [],
     soundSensors: [],
+    botLoadout: { classId: "operator", weaponId: "assault" },
     rematchRequests: new Set(),
     replay: { mapId: map.id, mapVersion: map.version, seed: 1, commands: [], events: [] },
     analytics: []
@@ -339,7 +342,7 @@ function createSlot(id: PlayerId): PlayerSlot {
     id,
     connected: false,
     botSeq: 0,
-    botState: "roam",
+    botState: "scout",
     botKnownEnemies: new Map(),
     botNextThinkTick: 0,
     botNextReactionTick: 0,
@@ -456,11 +459,12 @@ function startCountdown(room: RoomState): void {
 
 function clearBotSlot(slot: PlayerSlot): void {
   delete slot.bot;
+  delete slot.pendingLoadout;
   slot.pendingActions = [];
   slot.seenActionSeqs.clear();
   slot.actionResults = [];
   slot.botKnownEnemies.clear();
-  slot.botState = "roam";
+  slot.botState = "scout";
   delete slot.botGoal;
   slot.botNextThinkTick = 0;
   slot.botNextReactionTick = 0;
@@ -475,7 +479,7 @@ function resetBotSlot(slot: PlayerSlot, tick: number): void {
   slot.seenActionSeqs.clear();
   slot.inputState = { move: { x: 0, y: 0 }, aim: 0, fire: false, walk: false };
   slot.botSeq = 0;
-  slot.botState = "roam";
+  slot.botState = "scout";
   delete slot.botGoal;
   slot.botKnownEnemies.clear();
   slot.botNextThinkTick = tick;
@@ -486,11 +490,7 @@ function resetBotSlot(slot: PlayerSlot, tick: number): void {
 }
 
 function botLoadoutForSlot(room: RoomState, slot: PlayerSlot): PlayerLoadoutSelection {
-  const player = getPlayer(room, slot.id);
-  const teamIndex = room.playerList.filter((candidate) => candidate.team === player.team).findIndex((candidate) => candidate.id === player.id);
-  if (teamIndex % 3 === 1) return { classId: "scout", weaponId: "shotgun" };
-  if (teamIndex % 3 === 2) return { classId: "breacher", weaponId: "assault" };
-  return { classId: "operator", weaponId: "assault" };
+  return structuredClone(slot.pendingLoadout ?? room.botLoadout);
 }
 
 export function applyClientMessage(room: RoomState, playerId: PlayerId, message: ClientMessage): void {
@@ -505,6 +505,13 @@ export function applyClientMessage(room: RoomState, playerId: PlayerId, message:
   }
   if (message.type === "loadout") {
     getSlot(room, playerId).pendingLoadout = structuredClone(message.loadout);
+    return;
+  }
+  if (message.type === "bot-loadout") {
+    room.botLoadout = structuredClone(message.loadout);
+    for (const slot of room.slotList) {
+      if (slot.bot) slot.pendingLoadout = structuredClone(message.loadout);
+    }
     return;
   }
   if (message.type !== "command") return;
@@ -758,17 +765,13 @@ function rememberEnemy(slot: PlayerSlot, enemy: Pick<PlayerState, "id" | "positi
   });
 }
 
-function shouldBotRetreatForLowHealth(room: RoomState, player: PlayerState, slot: PlayerSlot): boolean {
-  if (player.hp > BOT_RETREAT_HP) {
-    slot.botLastLowHealthRetreatHp = player.hp;
-    slot.botLowHealthRetreatUntilTick = 0;
-    return false;
-  }
+function shouldBotRetreatAfterDamage(room: RoomState, player: PlayerState, slot: PlayerSlot): boolean {
   if (player.hp < slot.botLastLowHealthRetreatHp) {
     slot.botLastLowHealthRetreatHp = player.hp;
-    slot.botLowHealthRetreatUntilTick = room.tick + BOT_LOW_HEALTH_RETREAT_TICKS;
+    slot.botLowHealthRetreatUntilTick = room.tick + (player.hp <= BOT_RETREAT_HP ? BOT_LOW_HEALTH_RETREAT_TICKS : BOT_DAMAGE_RETREAT_TICKS);
     return true;
   }
+  if (player.hp > slot.botLastLowHealthRetreatHp) slot.botLastLowHealthRetreatHp = player.hp;
   return room.tick < slot.botLowHealthRetreatUntilTick;
 }
 
@@ -781,9 +784,9 @@ function thinkForBot(room: RoomState, player: PlayerState, slot: PlayerSlot): vo
   const inFire = room.molotovs.some((zone) => zone.owner !== player.id && distance(player.position, zone.position) <= zone.radius);
   const objective = room.round.phase === "overtime" ? room.round.objective : undefined;
   const urgentRetreat = !objective && (player.isReloading || player.ammo <= 0 || inFire);
-  const lowHealthRetreat = Boolean(!objective && target && shouldBotRetreatForLowHealth(room, player, slot));
+  const damageRetreat = Boolean(!objective && target && shouldBotRetreatAfterDamage(room, player, slot));
   const evadingAfterTrap = target && room.tick < slot.botSuppressionUntilTick;
-  slot.botState = objective ? "objective" : evadingAfterTrap || urgentRetreat || lowHealthRetreat ? "retreat" : visibleTarget ? "attack" : target ? "investigate" : shouldBotHold(room, player, slot) ? "hold" : "roam";
+  slot.botState = objective ? "objective" : evadingAfterTrap || urgentRetreat || damageRetreat ? "retreat" : visibleTarget ? "attack" : target ? "investigate" : "scout";
 
   const goal = botGoalForMode(room, player, slot, target);
   slot.botGoal = goal;
@@ -793,7 +796,7 @@ function thinkForBot(room: RoomState, player: PlayerState, slot: PlayerSlot): vo
   const aimTarget = shootGadget && visibleEnemyGadget ? visibleEnemyGadget.position : target ? botAimTarget(room, player, slot, target) : visibleEnemyGadget?.position ?? goal;
   const aim = Math.atan2(aimTarget.y - player.position.y, aimTarget.x - player.position.x);
   const fire = shootPlayer || shootGadget;
-  slot.inputState = { move, aim, fire, walk: slot.botState === "hold" || slot.botState === "investigate" };
+  slot.inputState = { move, aim, fire, walk: slot.botState === "investigate" };
 
   enqueueBotTacticalActions(room, player, slot, target, goal);
 }
@@ -815,6 +818,7 @@ function botGoalForMode(room: RoomState, player: PlayerState, slot: PlayerSlot, 
   if (slot.botState === "attack" && target) return tacticalEngagementPoint(room, player, target);
   if (slot.botState === "investigate" && target) return target.position;
   if (slot.botState === "retreat" && target) return retreatPoint(room, player, target.position);
+  if (slot.botState === "scout") return aggressiveScoutPoint(room, player, slot);
   if (slot.botGoal && distance(player.position, slot.botGoal) > 28) return slot.botGoal;
   return patrolPoint(room, slot);
 }
@@ -824,6 +828,7 @@ function chooseBotMove(room: RoomState, player: PlayerState, slot: PlayerSlot, g
   if (slot.botState === "objective") return distance(player.position, goal) < 18 ? { x: 0, y: 0 } : toGoal;
   if (slot.botState === "attack" && target && botHasUsefulShot(room, player, target, player.position)) {
     const targetDistance = distance(player.position, target.position);
+    if (targetDistance < preferredBotRange(player) - 28) return normalize({ x: player.position.x - target.position.x, y: player.position.y - target.position.y });
     if (targetDistance > preferredBotRange(player) + 18) return normalize({ x: target.position.x - player.position.x, y: target.position.y - player.position.y });
   }
   const perpendicular = { x: -toGoal.y, y: toGoal.x };
@@ -853,7 +858,7 @@ function chooseBotMove(room: RoomState, player: PlayerState, slot: PlayerSlot, g
       best = candidate;
     }
   }
-  if (distance(player.position, goal) < 18 && slot.botState !== "retreat") return { x: 0, y: 0 };
+  if (distance(player.position, goal) < 18 && slot.botState !== "retreat" && slot.botState !== "scout") return { x: 0, y: 0 };
   return normalize(best);
 }
 
@@ -999,11 +1004,17 @@ function maybeBotUseAbility(room: RoomState, player: PlayerState, slot: PlayerSl
   if (room.tick < slot.nextAbilityTick) return;
   if (player.abilityId === "tactical-ping" && (target?.source !== "vision" || room.round.phase === "overtime")) {
     enqueueBotAction(slot, { seq: nextBotSeq(slot), type: "ability" });
-  } else if (player.abilityId === "dash" && slot.botState === "retreat") {
+  } else if (player.abilityId === "dash" && (slot.botState === "retreat" || shouldScoutDashToRange(player, target))) {
     enqueueBotAction(slot, { seq: nextBotSeq(slot), type: "ability" });
-  } else if (player.abilityId === "breach-any" && target && target.source !== "vision" && distance(player.position, target.position) < 180) {
+  } else if (player.abilityId === "breach-any" && target && target.source !== "vision" && breacherSurpriseWall(room, player, target)) {
     enqueueBotAction(slot, { seq: nextBotSeq(slot), type: "ability" });
   }
+}
+
+function shouldScoutDashToRange(player: PlayerState, target?: BotKnownEnemy): boolean {
+  if (!target || target.source !== "vision") return false;
+  const targetDistance = distance(player.position, target.position);
+  return targetDistance < preferredBotRange(player) * 0.72;
 }
 
 function maybeBotDeployGadget(room: RoomState, player: PlayerState, slot: PlayerSlot, target: BotKnownEnemy | undefined, goal: Vec2): void {
@@ -1013,15 +1024,14 @@ function maybeBotDeployGadget(room: RoomState, player: PlayerState, slot: Player
     enqueueBotAction(slot, { seq: nextBotSeq(slot), type: "gadget", gadget: "smoke", target: cameraSmoke });
     return;
   }
-  const trapWall = botTrapWallPlacement(room, player, slot, target);
-  if (trapWall && player.gadgets.wall > 0) {
-    enqueueBotAction(slot, { seq: nextBotSeq(slot), type: "gadget", gadget: "wall", target: trapWall.target, angle: trapWall.angle });
-    slot.botSuppressionUntilTick = room.tick + Math.round(TICK_RATE * 1.35);
-    return;
-  }
   const doorBlock = botDoorBlockPlacement(room, player, slot, target, goal);
   if (doorBlock && player.gadgets.wall > 0) {
     enqueueBotAction(slot, { seq: nextBotSeq(slot), type: "gadget", gadget: "wall", target: doorBlock.target, angle: doorBlock.angle });
+    return;
+  }
+  const reinforcement = botDefensiveWallPlacement(room, player, slot, target, goal);
+  if (reinforcement && player.gadgets.wall > 0) {
+    enqueueBotAction(slot, { seq: nextBotSeq(slot), type: "gadget", gadget: "wall", target: reinforcement.target, angle: reinforcement.angle });
     return;
   }
   if ((slot.botState === "attack" || slot.botState === "investigate") && target && player.gadgets.molotov > 0 && distance(player.position, target.position) <= MOLOTOV_RANGE) {
@@ -1032,12 +1042,8 @@ function maybeBotDeployGadget(room: RoomState, player: PlayerState, slot: Player
     enqueueBotAction(slot, { seq: nextBotSeq(slot), type: "gadget", gadget: "smoke", target: goal });
     return;
   }
-  if ((slot.botState === "retreat" || slot.botState === "hold") && player.gadgets.wall > 0) {
-    enqueueBotAction(slot, { seq: nextBotSeq(slot), type: "gadget", gadget: "wall", target: add(player.position, mul(angleToVector(player.aim), 44)), angle: player.aim + Math.PI / 2 });
-    return;
-  }
   const setupPoint = room.round.objective?.position ?? { x: room.map.bounds.width / 2, y: room.map.bounds.height / 2 };
-  if ((slot.botState === "roam" || slot.botState === "hold" || slot.botState === "objective") && distance(player.position, setupPoint) < 220) {
+  if ((slot.botState === "scout" || slot.botState === "roam" || slot.botState === "objective") && distance(player.position, setupPoint) < 220) {
     if (player.gadgets.camera > 0) {
       enqueueBotAction(slot, { seq: nextBotSeq(slot), type: "gadget", gadget: "camera", target: clampTarget(room.map, player.position, setupPoint, CAMERA_RANGE) });
     } else if (player.gadgets.sound > 0) {
@@ -1062,28 +1068,12 @@ function botSmokeCameraPlacement(room: RoomState, player: PlayerState, _slot: Pl
   return thrown.position;
 }
 
-function botTrapWallPlacement(room: RoomState, player: PlayerState, slot: PlayerSlot, target: BotKnownEnemy | undefined): { target: Vec2; angle: number } | undefined {
-  if (!target || target.source !== "vision" || player.gadgets.wall <= 0) return undefined;
-  if (slot.botState !== "attack") return undefined;
-  const targetDistance = distance(player.position, target.position);
-  if (targetDistance < 135 || targetDistance > DEPLOYABLE_WALL_RANGE - 12) return undefined;
-  const toEnemy = normalize({ x: target.position.x - player.position.x, y: target.position.y - player.position.y });
-  if (Math.hypot(toEnemy.x, toEnemy.y) <= 0.001) return undefined;
-  const place = add(target.position, mul(toEnemy, PLAYER_RADIUS + DEPLOYABLE_WALL_THICKNESS / 2 + 18));
-  if (distance(player.position, place) > DEPLOYABLE_WALL_RANGE) return undefined;
-  if (distance(clampTarget(room.map, player.position, place, DEPLOYABLE_WALL_RANGE), place) > 1) return undefined;
-  if (!hasPlacementLineOfSight(room.map, player.position, place)) return undefined;
-  if (!isPlacementClear(room.map, place, PLAYER_RADIUS)) return undefined;
-  if (room.map.walls.some((wall) => wall.preset === "deployable-wall" && !wall.destroyed && distanceToSegment(place, wall.a, wall.b) <= DEPLOYABLE_WALL_THICKNESS + 8)) return undefined;
-  return { target: place, angle: Math.atan2(toEnemy.y, toEnemy.x) + Math.PI / 2 };
-}
-
 function candidateThrowSlack(): number {
   return 12;
 }
 
 function botDoorBlockPlacement(room: RoomState, player: PlayerState, slot: PlayerSlot, target: BotKnownEnemy | undefined, goal: Vec2): { target: Vec2; angle: number } | undefined {
-  if (player.gadgets.wall <= 0 || slot.botState === "roam" || slot.botState === "investigate") return undefined;
+  if (player.gadgets.wall <= 0 || (slot.botState !== "retreat" && slot.botState !== "objective")) return undefined;
   const interest = slot.botState === "objective" ? goal : target?.position;
   if (!interest) return undefined;
   let best: { target: Vec2; angle: number; score: number } | undefined;
@@ -1116,6 +1106,23 @@ function doorBlockerPlacement(room: RoomState, player: PlayerState, door: Wall):
   return { target, angle: Math.atan2(direction.y, direction.x) };
 }
 
+function botDefensiveWallPlacement(room: RoomState, player: PlayerState, slot: PlayerSlot, target: BotKnownEnemy | undefined, goal: Vec2): { target: Vec2; angle: number } | undefined {
+  if (player.gadgets.wall <= 0 || slot.botState !== "objective") return undefined;
+  const objective = room.round.objective;
+  const anchor = objective?.position ?? goal;
+  if (distance(player.position, anchor) > (objective?.radius ?? 32) + 36) return undefined;
+  const threat = target?.position ?? nearestEnemySpawn(room, player)?.position ?? { x: room.map.bounds.width / 2, y: room.map.bounds.height / 2 };
+  const threatDirection = normalize({ x: threat.x - anchor.x, y: threat.y - anchor.y });
+  if (Math.hypot(threatDirection.x, threatDirection.y) <= 0.001) return undefined;
+  const targetPoint = add(anchor, mul(threatDirection, (objective?.radius ?? 32) + DEPLOYABLE_WALL_THICKNESS + 10));
+  if (distance(player.position, targetPoint) > DEPLOYABLE_WALL_RANGE) return undefined;
+  if (distance(clampTarget(room.map, player.position, targetPoint, DEPLOYABLE_WALL_RANGE), targetPoint) > 1) return undefined;
+  if (!hasPlacementLineOfSight(room.map, player.position, targetPoint)) return undefined;
+  if (!isPlacementClear(room.map, targetPoint, PLAYER_RADIUS)) return undefined;
+  if (room.map.walls.some((wall) => wall.preset === "deployable-wall" && !wall.destroyed && distanceToSegment(targetPoint, wall.a, wall.b) <= DEPLOYABLE_WALL_THICKNESS + 8)) return undefined;
+  return { target: targetPoint, angle: Math.atan2(threatDirection.y, threatDirection.x) + Math.PI / 2 };
+}
+
 function enqueueBotAction(slot: PlayerSlot, action: PendingAction): void {
   const actionKey = `${action.seq}:${action.type}`;
   if (slot.seenActionSeqs.has(actionKey)) return;
@@ -1126,10 +1133,6 @@ function enqueueBotAction(slot: PlayerSlot, action: PendingAction): void {
 function nextBotSeq(slot: PlayerSlot): number {
   slot.botSeq += 1;
   return slot.botSeq;
-}
-
-function shouldBotHold(room: RoomState, player: PlayerState, slot: PlayerSlot): boolean {
-  return room.tick % 180 < 45 && (slot.botGoal ? distance(player.position, slot.botGoal) < 70 : player.gadgets.camera === 0);
 }
 
 function patrolPoint(room: RoomState, slot: PlayerSlot): Vec2 {
@@ -1143,6 +1146,25 @@ function patrolPoint(room: RoomState, slot: PlayerSlot): Vec2 {
     { x: margin, y: room.map.bounds.height - margin }
   ];
   return points[index]!;
+}
+
+function aggressiveScoutPoint(room: RoomState, player: PlayerState, slot: PlayerSlot): Vec2 {
+  const enemySpawns = room.map.spawns.filter((spawn) => spawn.team !== player.team);
+  const center = { x: room.map.bounds.width / 2, y: room.map.bounds.height / 2 };
+  const candidates = enemySpawns.length > 0
+    ? [center, ...enemySpawns.map((spawn) => spawn.position)]
+    : [center, patrolPoint(room, slot)];
+  const phase = Math.floor((room.tick / 180 + stringSeed(slot.id)) % candidates.length);
+  let target = candidates[phase]!;
+  if (distance(player.position, target) < 36) target = candidates[(phase + 1) % candidates.length]!;
+  return { ...target };
+}
+
+function nearestEnemySpawn(room: RoomState, player: PlayerState): MapDefinition["spawns"][number] | undefined {
+  return room.map.spawns
+    .filter((spawn) => spawn.team !== player.team)
+    .map((spawn) => ({ spawn, distance: distance(player.position, spawn.position) }))
+    .sort((a, b) => a.distance - b.distance)[0]?.spawn;
 }
 
 function retreatPoint(room: RoomState, player: PlayerState, danger: Vec2): Vec2 {
@@ -1557,7 +1579,7 @@ function runClassAbility(room: RoomState, player: PlayerState, slot: PlayerSlot)
     scoutDash(room, player, slot);
     return true;
   }
-  if (player.abilityId === "breach-any") return breachAnyWall(room, player);
+  if (player.abilityId === "breach-any") return breachAnyWall(room, player, slot);
   return false;
 }
 
@@ -1589,8 +1611,9 @@ function scoutDash(room: RoomState, player: PlayerState, slot: PlayerSlot): void
   player.position = next;
 }
 
-function breachAnyWall(room: RoomState, player: PlayerState): boolean {
-  const target = room.map.walls
+function breachAnyWall(room: RoomState, player: PlayerState, slot: PlayerSlot): boolean {
+  const knownTarget = slot.bot ? bestBotTarget(room, player, slot) : undefined;
+  const target = breacherSurpriseWall(room, player, knownTarget) ?? room.map.walls
     .filter((wall) => !wall.destroyed && !isHingedDoorSegment(wall) && !isLevelBoundarySegment(room.map, wall) && (wall.blocksMovement || wall.blocksVision || wall.blocksShooting))
     .map((wall) => ({ wall, distance: distanceToSegment(player.position, wall.a, wall.b) }))
     .filter(({ distance: wallDistance }) => wallDistance <= BREACHER_ABILITY_RANGE)
@@ -1598,6 +1621,18 @@ function breachAnyWall(room: RoomState, player: PlayerState): boolean {
   if (!target) return false;
   destroyWallSegment(room, target, player.id);
   return true;
+}
+
+function breacherSurpriseWall(room: RoomState, player: PlayerState, target?: BotKnownEnemy): Wall | undefined {
+  if (!target || target.source === "vision") return undefined;
+  return room.activeShootingWalls
+    .filter((wall) => !wall.destroyed && !isHingedDoorSegment(wall) && !isLevelBoundarySegment(room.map, wall))
+    .map((wall) => {
+      const hit = lineIntersection(player.position, target.position, wall.a, wall.b);
+      return { wall, hit, wallDistance: distanceToSegment(player.position, wall.a, wall.b), targetDistance: distance(player.position, target.position) };
+    })
+    .filter(({ hit, wallDistance, targetDistance }) => Boolean(hit) && wallDistance <= BREACHER_ABILITY_RANGE && targetDistance <= 260)
+    .sort((a, b) => a.wallDistance - b.wallDistance)[0]?.wall;
 }
 
 function isLevelBoundarySegment(map: MapDefinition, wall: Wall): boolean {
@@ -2227,6 +2262,7 @@ export function snapshotFor(room: RoomState, playerId: PlayerId): ServerSnapshot
     round: { ...room.round, scores: { ...room.round.scores } },
     self: clonePlayerState(self),
     ...(slot.pendingLoadout ? { nextLoadout: structuredClone(slot.pendingLoadout) } : {}),
+    botLoadout: structuredClone(room.botLoadout),
     visiblePlayers,
     detections: debug ? room.detections : room.detections.filter((detection) => detection.owner === playerId || isPointVisibleToPlayer(room, self, detection.position)),
     map: { walls: debug ? room.map.walls : wallsForPlayer(room, playerId), sensors: debug ? room.map.sensors : [] },

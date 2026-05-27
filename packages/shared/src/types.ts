@@ -236,6 +236,7 @@ export interface ServerSnapshot {
   round: RoundState;
   self: PlayerState;
   nextLoadout?: PlayerLoadoutSelection;
+  botLoadout?: PlayerLoadoutSelection;
   visiblePlayers: PlayerState[];
   detections: Detection[];
   map: {
@@ -408,6 +409,11 @@ export interface LoadoutChangeRequest {
   loadout: PlayerLoadoutSelection;
 }
 
+export interface BotLoadoutChangeRequest {
+  type: "bot-loadout";
+  loadout: PlayerLoadoutSelection;
+}
+
 export interface AddBotsRequest {
   type: "add-bots";
 }
@@ -429,5 +435,5 @@ export interface RoomSummary {
   phase: RoundPhase;
 }
 
-export type ClientMessage = ClientHello | PlayerCommand | RematchRequest | LoadoutChangeRequest | AddBotsRequest;
+export type ClientMessage = ClientHello | PlayerCommand | RematchRequest | LoadoutChangeRequest | BotLoadoutChangeRequest | AddBotsRequest;
 export type ServerMessage = ServerWelcome | ServerSnapshot | { type: "rooms"; rooms: RoomSummary[] } | { type: "bots-added"; count: number } | { type: "error"; message: string };

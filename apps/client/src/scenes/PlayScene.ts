@@ -58,6 +58,8 @@ export class PlayScene extends Phaser.Scene {
   private refreshBar: HTMLElement | undefined = undefined;
   private selectedClass: PlayerClassPresetId = "operator";
   private selectedWeapon: WeaponPresetId = "assault";
+  private selectedBotClass: PlayerClassPresetId = "operator";
+  private selectedBotWeapon: WeaponPresetId = "assault";
   private audio = new AudioDirector();
   private playedShotFx = new Set<string>();
   private playedShotFxOrder: string[] = [];
@@ -180,6 +182,24 @@ export class PlayScene extends Phaser.Scene {
         <div class="escape-menu" hidden>
           <h2>Game Menu</h2>
           <p>Change loadout for next round or leave the current game.</p>
+          <div class="loadout-picker bot-loadout-picker" data-bot-loadout-picker>
+            <div class="loadout-heading">
+              <strong>Bot Next Round</strong>
+              <span>applies to bot opponents</span>
+            </div>
+            <label>Bot Class
+              <select data-bot-loadout="class">
+                ${Object.values(playerClassPresets).map((preset) => `<option value="${preset.id}">${preset.name}</option>`).join("")}
+              </select>
+            </label>
+            <label>Bot Gun
+              <select data-bot-loadout="weapon">
+                ${Object.values(weaponPresets).map((weapon) => `<option value="${weapon.id}">${weapon.name}</option>`).join("")}
+              </select>
+            </label>
+            <div class="loadout-note" data-bot-loadout-note>${formatLoadout(this.currentBotLoadout())}</div>
+            <div class="loadout-details" data-bot-loadout-details></div>
+          </div>
           <div class="menu-actions">
             <button class="secondary-action" data-action="resume">Resume</button>
             <button class="secondary-action" data-action="leave">Leave Game</button>
@@ -220,7 +240,16 @@ export class PlayScene extends Phaser.Scene {
       this.selectedWeapon = (event.currentTarget as HTMLSelectElement).value as WeaponPresetId;
       this.handleLoadoutChange();
     });
+    this.shell.querySelector<HTMLSelectElement>("[data-bot-loadout='class']")?.addEventListener("change", (event) => {
+      this.selectedBotClass = (event.currentTarget as HTMLSelectElement).value as PlayerClassPresetId;
+      this.handleBotLoadoutChange();
+    });
+    this.shell.querySelector<HTMLSelectElement>("[data-bot-loadout='weapon']")?.addEventListener("change", (event) => {
+      this.selectedBotWeapon = (event.currentTarget as HTMLSelectElement).value as WeaponPresetId;
+      this.handleBotLoadoutChange();
+    });
     this.updateLoadoutStatus();
+    this.updateBotLoadoutStatus();
     void this.refreshRooms();
     this.startRoomRefresh();
   }
@@ -307,10 +336,21 @@ export class PlayScene extends Phaser.Scene {
     return { classId: this.selectedClass, weaponId: this.selectedWeapon };
   }
 
+  private currentBotLoadout(): PlayerLoadoutSelection {
+    return { classId: this.selectedBotClass, weaponId: this.selectedBotWeapon };
+  }
+
   private handleLoadoutChange(): void {
     this.updateLoadoutStatus(this.snapshot);
     if (this.socket?.readyState === WebSocket.OPEN && this.welcome) {
       this.send({ type: "loadout", loadout: this.currentLoadout() });
+    }
+  }
+
+  private handleBotLoadoutChange(): void {
+    this.updateBotLoadoutStatus(this.snapshot);
+    if (this.socket?.readyState === WebSocket.OPEN && this.welcome) {
+      this.send({ type: "bot-loadout", loadout: this.currentBotLoadout() });
     }
   }
 
@@ -344,6 +384,7 @@ export class PlayScene extends Phaser.Scene {
       this.consumeReadability(message);
       this.updateLastSeenEnemies(message);
       this.updateLoadoutStatus(message);
+      this.updateBotLoadoutStatus(message);
       this.renderMap(message);
       this.renderSnapshot(message);
     } else if (message.type === "bots-added") {
@@ -877,6 +918,25 @@ export class PlayScene extends Phaser.Scene {
     note.textContent = `Will apply next round: ${formatLoadout(selectedLoadout)}`;
   }
 
+  private updateBotLoadoutStatus(snapshot?: ServerSnapshot): void {
+    const picker = this.shell?.querySelector<HTMLElement>("[data-bot-loadout-picker]");
+    const note = this.shell?.querySelector<HTMLElement>("[data-bot-loadout-note]");
+    const details = this.shell?.querySelector<HTMLElement>("[data-bot-loadout-details]");
+    if (!picker || !note) return;
+    const selectedLoadout = this.currentBotLoadout();
+    if (details) details.innerHTML = loadoutDetailsHtml(selectedLoadout);
+    if (!this.welcome) {
+      note.textContent = `Default bot: ${formatLoadout(selectedLoadout)}`;
+      return;
+    }
+    const serverLoadout = snapshot?.botLoadout;
+    if (serverLoadout && loadoutMatchesSelection(selectedLoadout, serverLoadout)) {
+      note.textContent = `Queued for bot next round: ${formatLoadout(serverLoadout)}`;
+      return;
+    }
+    note.textContent = `Will queue bot next round: ${formatLoadout(selectedLoadout)}`;
+  }
+
   private updateMenuOpenClass(): void {
     this.shell?.classList.toggle("menu-open", this.menuOpen);
     const menu = this.shell?.querySelector<HTMLElement>(".escape-menu");
@@ -911,6 +971,10 @@ function formatLoadout(loadout: PlayerLoadoutSelection): string {
 
 function loadoutMatchesSelf(loadout: PlayerLoadoutSelection, self: PlayerState): boolean {
   return (loadout.classId ?? "operator") === self.classId && (loadout.weaponId ?? "assault") === self.weaponId;
+}
+
+function loadoutMatchesSelection(a: PlayerLoadoutSelection, b: PlayerLoadoutSelection): boolean {
+  return (a.classId ?? "operator") === (b.classId ?? "operator") && (a.weaponId ?? "assault") === (b.weaponId ?? "assault");
 }
 
 function loadoutDetailsHtml(loadout: PlayerLoadoutSelection): string {

@@ -92,6 +92,7 @@ export const BOT_REACTION_MAX_TICKS = Math.round(TICK_RATE * 0.48);
 export const BOT_ATTACK_RANGE_BUFFER = 1;
 export const BOT_VISION_RANGE_SCALE = 0.9;
 export const BOT_RETREAT_HP = 2;
+export const BOT_DAMAGE_RETREAT_TICKS = Math.round(TICK_RATE * 1.15);
 export const BOT_LOW_HEALTH_RETREAT_TICKS = Math.round(TICK_RATE * 1.8);
 export const BOT_AIM_ERROR_CLOSE = (1.05 * Math.PI) / 180;
 export const BOT_AIM_ERROR_FAR = (3.1 * Math.PI) / 180;

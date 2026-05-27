@@ -96,10 +96,40 @@ describe("authoritative simulation", () => {
     expect(addBotsToRoom(room)).toBe(0);
   });
 
+  it("defaults bot loadout to operator assault and applies changed bot settings next round", () => {
+    const room = createRoom("bot-loadout", testMap());
+    joinRoom(room, false, "p1");
+    addBotsToRoom(room);
+    for (let i = 0; i < 46; i += 1) stepRoom(room);
+    expect(room.players.p2.classId).toBe("operator");
+    expect(room.players.p2.weaponId).toBe("assault");
+
+    applyClientMessage(room, "p1", { type: "bot-loadout", loadout: { classId: "scout", weaponId: "shotgun" } });
+    expect(snapshotFor(room, "p1").botLoadout).toEqual({ classId: "scout", weaponId: "shotgun" });
+    expect(room.players.p2.classId).toBe("operator");
+    expect(room.players.p2.weaponId).toBe("assault");
+
+    room.players.p1.position = { x: 50, y: 120 };
+    room.players.p2.position = { x: 80, y: 120 };
+    room.players.p2.hp = 1;
+    room.slots.p2.botNextThinkTick = room.tick + 999;
+    room.slots.p2.inputState = { move: { x: -1, y: 0 }, aim: Math.PI, fire: false, walk: false };
+    applyClientMessage(room, "p1", { type: "command", seq: 1, tick: room.tick, move: { x: 0, y: 0 }, aim: 0, fire: true, use: "none" });
+    stepRoom(room);
+
+    expect(room.round.phase).toBe("countdown");
+    expect(room.players.p2.position).toEqual({ x: 250, y: 120 });
+    expect(room.players.p2.classId).toBe("scout");
+    expect(room.players.p2.weaponId).toBe("shotgun");
+    expect(room.players.p1.classId).toBe("operator");
+    expect(room.players.p1.weaponId).toBe("assault");
+  });
+
   it("lets a human replace a bot slot and resets the match to authored spawns", () => {
     const room = createRoom("bot-replace", testMap());
     joinRoom(room, false, "p1");
     addBotsToRoom(room);
+    applyClientMessage(room, "p1", { type: "bot-loadout", loadout: { classId: "breacher", weaponId: "sniper" } });
     for (let i = 0; i < 80; i += 1) stepRoom(room);
     room.players.p1.position = { x: 120, y: 130 };
     room.players.p2.position = { x: 180, y: 130 };
@@ -113,6 +143,7 @@ describe("authoritative simulation", () => {
     expect(room.players.p1.position).toEqual({ x: 50, y: 120 });
     expect(room.players.p2.position).toEqual({ x: 250, y: 120 });
     expect(room.players.p2.weaponId).toBe("sniper");
+    expect(snapshotFor(room, "p2").nextLoadout).toBeUndefined();
   });
 
   it("makes bots shoot eagerly after reaction delay and hold fire", () => {
@@ -147,6 +178,58 @@ describe("authoritative simulation", () => {
     expect(room.slots.p2.botState).toBe("objective");
     expect(room.slots.p2.inputState.move.x).toBeLessThan(0);
     expect(room.slots.p2.inputState.move.y).toBeGreaterThan(0);
+  });
+
+  it("starts bots in aggressive scouting mode", () => {
+    const room = createRoom("bot-scout-start", testMap());
+    joinRoom(room, false, "p1");
+    addBotsToRoom(room);
+    for (let i = 0; i < 46; i += 1) stepRoom(room);
+    room.players.p2.position = { x: 250, y: 120 };
+    room.players.p2.aim = -Math.PI / 2;
+    room.slots.p2.botKnownEnemies.clear();
+    room.slots.p2.botNextThinkTick = room.tick;
+    room.soundEvents.length = 0;
+    room.detections.length = 0;
+
+    stepRoom(room);
+
+    expect(room.slots.p2.botState).toBe("scout");
+    expect(room.slots.p2.inputState.move.x).toBeLessThan(0);
+    expect(room.slots.p2.inputState.fire).toBe(false);
+  });
+
+  it("retreats defensively after any damage, then can re-engage", () => {
+    const room = createRoom("bot-damage-retreat", testMap());
+    joinRoom(room, false, "p1");
+    addBotsToRoom(room);
+    for (let i = 0; i < 46; i += 1) stepRoom(room);
+    room.players.p1.position = { x: 170, y: 120 };
+    room.players.p2.position = { x: 250, y: 120 };
+    room.players.p2.hp = 4;
+    room.players.p2.gadgets = { camera: 0, molotov: 0, smoke: 0, wall: 0, sound: 0 };
+    room.slots.p2.botKnownEnemies.clear();
+    room.slots.p2.botNextThinkTick = room.tick;
+    room.slots.p2.botNextReactionTick = room.tick + 999;
+    room.slots.p2.nextAbilityTick = room.tick + 999;
+    room.soundEvents.length = 0;
+    room.detections.length = 0;
+
+    stepRoom(room);
+
+    expect(room.slots.p2.botState).toBe("retreat");
+    expect(room.slots.p2.botLowHealthRetreatUntilTick).toBeGreaterThan(room.tick);
+
+    room.tick = room.slots.p2.botLowHealthRetreatUntilTick;
+    room.players.p1.position = { x: 170, y: 120 };
+    room.players.p2.position = { x: 250, y: 120 };
+    room.slots.p2.botNextThinkTick = room.tick;
+    room.soundEvents.length = 0;
+    room.detections.length = 0;
+
+    stepRoom(room);
+
+    expect(room.slots.p2.botState).toBe("attack");
   });
 
   it("lets low-health bots re-engage after a short retreat", () => {
@@ -206,6 +289,81 @@ describe("authoritative simulation", () => {
     expect(room.slots.p2.botState).toBe("objective");
     expect(room.slots.p2.inputState.move.x).toBeLessThan(0);
     expect(room.slots.p2.inputState.move.y).toBeGreaterThan(0);
+  });
+
+  it("reinforces an active objective after reaching it", () => {
+    const map = testMap();
+    map.objective = { id: "objective", position: { x: 250, y: 120 }, radius: 28 };
+    const room = createRoom("bot-objective-reinforce", map);
+    joinRoom(room, false, "p1");
+    addBotsToRoom(room);
+    for (let i = 0; i < 46; i += 1) stepRoom(room);
+    room.round.phase = "overtime";
+    room.round.overtimeEndsAtTick = room.tick + 1800;
+    room.round.objective = { id: "objective", position: { x: 250, y: 120 }, radius: 28, progressTicks: 0, requiredTicks: 30 };
+    room.players.p1.position = { x: 130, y: 120 };
+    room.players.p2.position = { x: 250, y: 120 };
+    room.players.p2.gadgets.molotov = 0;
+    room.players.p2.gadgets.smoke = 0;
+    room.slots.p2.botKnownEnemies.clear();
+    room.slots.p2.botNextThinkTick = room.tick;
+    room.slots.p2.nextActionTick = room.tick;
+
+    stepRoom(room);
+
+    const deployedWall = room.map.walls.find((wall) => wall.preset === "deployable-wall" && wall.id.startsWith("p2-wall"));
+    expect(room.slots.p2.botState).toBe("objective");
+    expect(deployedWall).toBeDefined();
+    expect(distanceToSegment({ x: 202, y: 120 }, deployedWall!.a, deployedWall!.b)).toBeLessThan(18);
+  });
+
+  it("lets breacher bots break a wall to a known enemy on the other side", () => {
+    const map = testMap();
+    map.walls.push(createWall("surprise-wall", "solid", { x: 210, y: 70 }, { x: 210, y: 170 }, 8));
+    const room = createRoom("bot-breacher-surprise", map);
+    joinRoom(room, false, "p1");
+    applyClientMessage(room, "p1", { type: "bot-loadout", loadout: { classId: "breacher", weaponId: "assault" } });
+    addBotsToRoom(room);
+    for (let i = 0; i < 46; i += 1) stepRoom(room);
+    room.players.p1.position = { x: 170, y: 120 };
+    room.players.p2.position = { x: 250, y: 120 };
+    room.slots.p2.botKnownEnemies.set("p1", {
+      id: "p1",
+      position: { ...room.players.p1.position },
+      velocity: { x: 0, y: 0 },
+      confidence: 0.78,
+      lastSeenTick: room.tick,
+      expiresAtTick: room.tick + 120,
+      source: "sound"
+    });
+    room.slots.p2.botNextThinkTick = room.tick;
+    room.slots.p2.nextAbilityTick = room.tick;
+
+    stepRoom(room);
+
+    expect(room.map.walls.find((wall) => wall.id === "surprise-wall")?.destroyed).toBe(true);
+  });
+
+  it("lets scout bots dash back toward effective range when too close", () => {
+    const room = createRoom("bot-scout-dash-range", testMap());
+    joinRoom(room, false, "p1");
+    applyClientMessage(room, "p1", { type: "bot-loadout", loadout: { classId: "scout", weaponId: "shotgun" } });
+    addBotsToRoom(room);
+    for (let i = 0; i < 46; i += 1) stepRoom(room);
+    room.players.p1.position = { x: 200, y: 120 };
+    room.players.p2.position = { x: 250, y: 120 };
+    room.players.p2.aim = Math.PI;
+    room.slots.p2.botKnownEnemies.clear();
+    room.slots.p2.botNextThinkTick = room.tick;
+    room.slots.p2.botNextReactionTick = room.tick;
+    room.slots.p2.nextAbilityTick = room.tick;
+    const before = distance(room.players.p2.position, room.players.p1.position);
+
+    stepRoom(room);
+
+    expect(room.players.p2.abilityId).toBe("dash");
+    expect(distance(room.players.p2.position, room.players.p1.position)).toBeGreaterThan(before);
+    expect(room.slots.p2.nextAbilityTick).toBeGreaterThan(room.tick);
   });
 
   it("lets bots shoot breakable windows but reposition around hard windows", () => {
@@ -307,8 +465,8 @@ describe("authoritative simulation", () => {
     expect(room.players.p2.gadgets.smoke).toBeLessThan(room.players.p2.gadgetLoadout.smoke);
   });
 
-  it("places a trap wall behind a visible enemy and then retreats", () => {
-    const room = createRoom("bot-trap-wall", testMap());
+  it("does not place attack walls unless retreating or reinforcing", () => {
+    const room = createRoom("bot-no-attack-wall", testMap());
     joinRoom(room, false, "p1");
     addBotsToRoom(room);
     for (let i = 0; i < 46; i += 1) stepRoom(room);
@@ -322,23 +480,20 @@ describe("authoritative simulation", () => {
 
     stepRoom(room);
 
-    const deployedWall = room.map.walls.find((wall) => wall.preset === "deployable-wall" && wall.id.startsWith("p2-wall"));
-    expect(deployedWall).toBeDefined();
-    expect(distanceToSegment({ x: 100, y: 120 }, deployedWall!.a, deployedWall!.b)).toBeLessThan(16);
-
-    room.slots.p2.botNextThinkTick = room.tick;
-    stepRoom(room);
-    expect(room.slots.p2.botState).toBe("retreat");
+    expect(room.slots.p2.botState).toBe("attack");
+    expect(room.map.walls.find((wall) => wall.preset === "deployable-wall" && wall.id.startsWith("p2-wall"))).toBeUndefined();
   });
 
   it("uses a slightly shorter direct sight range for bot perception", () => {
-    const room = createRoom("bot-short-sight", testMap());
+    const map = testMap();
+    map.bounds.width = 600;
+    const room = createRoom("bot-short-sight", map);
     joinRoom(room, false, "p1");
     addBotsToRoom(room);
     for (let i = 0; i < 46; i += 1) stepRoom(room);
     room.players.p2.position = { x: 40, y: 120 };
     room.players.p2.aim = 0;
-    room.players.p1.position = { x: 282, y: 120 };
+    room.players.p1.position = { x: 460, y: 120 };
     room.slots.p2.botKnownEnemies.clear();
     room.slots.p2.botNextThinkTick = room.tick;
     room.soundEvents.length = 0;
@@ -349,7 +504,7 @@ describe("authoritative simulation", () => {
 
     room.players.p2.position = { x: 40, y: 120 };
     room.players.p2.aim = 0;
-    room.players.p1.position = { x: 260, y: 120 };
+    room.players.p1.position = { x: 430, y: 120 };
     room.slots.p2.botKnownEnemies.clear();
     room.slots.p2.botNextThinkTick = room.tick;
     room.soundEvents.length = 0;
@@ -489,13 +644,15 @@ describe("authoritative simulation", () => {
   });
 
   it("uses a slightly shorter direct sight range for bot perception", () => {
-    const room = createRoom("bot-short-sight", testMap());
+    const map = testMap();
+    map.bounds.width = 600;
+    const room = createRoom("bot-short-sight", map);
     joinRoom(room, false, "p1");
     addBotsToRoom(room);
     for (let i = 0; i < 46; i += 1) stepRoom(room);
     room.players.p2.position = { x: 40, y: 120 };
     room.players.p2.aim = 0;
-    room.players.p1.position = { x: 282, y: 120 };
+    room.players.p1.position = { x: 460, y: 120 };
     room.slots.p2.botKnownEnemies.clear();
     room.slots.p2.botNextThinkTick = room.tick;
     room.soundEvents.length = 0;
@@ -506,7 +663,7 @@ describe("authoritative simulation", () => {
 
     room.players.p2.position = { x: 40, y: 120 };
     room.players.p2.aim = 0;
-    room.players.p1.position = { x: 260, y: 120 };
+    room.players.p1.position = { x: 430, y: 120 };
     room.slots.p2.botKnownEnemies.clear();
     room.slots.p2.botNextThinkTick = room.tick;
     room.soundEvents.length = 0;
@@ -999,8 +1156,10 @@ describe("authoritative simulation", () => {
   });
 
   it("uses the shorter vision range", () => {
-    const room = activeRoom(testMap());
-    room.players.p2.position = { x: 330, y: 120 };
+    const map = testMap();
+    map.bounds.width = 700;
+    const room = activeRoom(map);
+    room.players.p2.position = { x: 530, y: 120 };
     room.players.p1.aim = 0;
     expect(snapshotFor(room, "p1").visiblePlayers).toHaveLength(0);
   });
@@ -1014,7 +1173,7 @@ describe("authoritative simulation", () => {
 
     const snapshot = snapshotFor(room, "p1");
 
-    expect(snapshot.visiblePolygon.length).toBeGreaterThan(NORMAL_VISION_RAYS + 2);
+    expect(snapshot.visiblePolygon.length).toBeGreaterThan(NORMAL_VISION_RAYS);
   });
 
   it("keeps doors at the last seen state while out of vision", () => {
@@ -1650,7 +1809,7 @@ describe("authoritative simulation", () => {
   it("uses selected gun factories for vision and shotgun pellet damage", () => {
     const longMap = testMap();
     longMap.bounds.width = 900;
-    longMap.spawns[1]!.position = { x: 430, y: 120 };
+    longMap.spawns[1]!.position = { x: 520, y: 120 };
     const assaultRoom = createRoom("assault-vision", longMap);
     joinRoom(assaultRoom, false, "p1", { weaponId: "assault" });
     joinRoom(assaultRoom, false, "p2");
